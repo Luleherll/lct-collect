@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.astro/
+.firebase/
+.env
+.env.*.local
+*-debug.log
+*service-account*.json
+*credentials*.json
+coverage/
+*.csv
+*.xlsx
