@@ -1,5 +1,13 @@
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth, signOut } from 'firebase/auth';
+import { storage } from './storage';
+import {
+  connectAuthEmulator,
+  initializeAuth,
+  browserSessionPersistence,
+  inMemoryPersistence,
+  setPersistence,
+  signOut,
+} from 'firebase/auth';
 import {
   clearIndexedDbPersistence,
   connectFirestoreEmulator,
@@ -43,13 +51,31 @@ const app = initializeApp({
   appId: env.PUBLIC_FIREBASE_APP_ID,
   messagingSenderId: env.PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
 });
-export const auth = getAuth(app);
+export const auth = initializeAuth(app, {
+  persistence: [browserSessionPersistence, inMemoryPersistence],
+});
+export let memoryOnlySession = false;
+export async function prepareLogin(trusted: boolean) {
+  storage.set('local', 'lct-trusted-device', trusted ? 'yes' : 'no');
+  const available = storage.set('session', 'lct-auth-storage-check', '1');
+  storage.remove('session', 'lct-auth-storage-check');
+  memoryOnlySession = !available;
+  try {
+    await setPersistence(
+      auth,
+      available ? browserSessionPersistence : inMemoryPersistence,
+    );
+  } catch {
+    memoryOnlySession = true;
+    await setPersistence(auth, inMemoryPersistence);
+  }
+}
 let database: ReturnType<typeof initializeFirestore> | undefined;
 export function db() {
   if (!database) {
     let trusted = false;
     try {
-      trusted = localStorage.getItem('lct-trusted-device') === 'yes';
+      trusted = storage.get('local', 'lct-trusted-device') === 'yes';
     } catch {
       /* Memory cache remains available. */
     }
@@ -76,12 +102,13 @@ export async function logout() {
     }
   }
   try {
-    localStorage.removeItem('lct-trusted-device');
+    storage.remove('local', 'lct-trusted-device');
   } catch {
     /* Storage may be disabled. */
   }
   if (!cleared)
-    sessionStorage.setItem(
+    storage.set(
+      'session',
       'lct-cache-warning',
       'Close other LCT Collect tabs and clear site data on this device to remove its saved records.',
     );

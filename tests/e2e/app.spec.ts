@@ -1,0 +1,328 @@
+import { test, expect, type Page } from '@playwright/test';
+import { join } from 'node:path';
+import { bounds, workday } from '../../src/lib/domain';
+const evidence = process.env.LCT_UI_EVIDENCE_DIR ?? 'test-results/visual';
+async function login(page: Page, role = 'agent') {
+  await page.goto('/login/');
+  await page.getByPlaceholder('Your username').fill(`demo.${role}`);
+  await page.getByPlaceholder('Your password').fill('CollectDemo123!');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.waitForURL(role === 'agent' ? '**/agent/' : `**/${role}/`);
+}
+async function select(page: Page, id = '003') {
+  await page.getByLabel('Search members', { exact: true }).fill(id);
+  await page
+    .locator('.suggestions button')
+    .filter({ hasText: `Account ID ${id}` })
+    .click();
+}
+async function noOverflow(page: Page) {
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+}
+
+test('agent validates, protects drafts, saves through real operations, and voids a line', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await login(page);
+  await select(page);
+  await expect(page.locator('#deposit')).toBeFocused();
+  await page.locator('#deposit').fill('1.5');
+  await page.locator('#withdrawal').focus();
+  await expect(page.locator('#deposit-error')).toContainText('whole UGX');
+  await expect(page.getByRole('heading', { name: 'New entry' })).toBeVisible();
+  await page.locator('#deposit').fill('21,007');
+  await page.locator('#withdrawal').focus();
+  await expect(page.locator('#deposit-error')).toHaveCount(0);
+  await page.getByLabel('Search members', { exact: true }).fill('004');
+  await page
+    .locator('.suggestions button')
+    .filter({ hasText: 'Account ID 004' })
+    .click();
+  await expect(page.getByRole('dialog')).toContainText('Change member');
+  await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
+  await expect(page.locator('#deposit')).toHaveValue('21,007');
+  await page.getByRole('link', { name: 'Skip to content' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#main-content')).toBeFocused();
+  await page.getByRole('link', { name: 'History', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Discard this entry');
+  await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
+  await page.getByLabel('Clear search members').click();
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('21,007');
+  await page.getByRole('button', { name: 'Confirm & save' }).click();
+  await expect(
+    page.getByRole('region', { name: 'Saved entry receipt' }),
+  ).toContainText('Example Member 3');
+  await expect(
+    page.getByRole('region', { name: 'Saved entry receipt' }),
+  ).toContainText('21,007');
+  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  const row = page.locator('.entry-row').filter({ hasText: '21,007' }).first();
+  await row.getByRole('button', { name: 'View Deposit details' }).click();
+  await page.getByLabel('Reason for voiding').fill('Browser test correction');
+  await page.getByRole('button', { name: 'Void this line' }).click();
+  await expect(row).toContainText('Voided');
+  expect(errors).toEqual([]);
+  await noOverflow(page);
+});
+
+test('member change discards amounts only after confirmation and long inputs reflow at 320px', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+  await login(page);
+  await select(page);
+  await page.locator('#deposit').fill('100,000,000');
+  await page.locator('#withdrawal').focus();
+  await noOverflow(page);
+  expect(
+    await page
+      .locator('#deposit')
+      .evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true);
+  await page.getByLabel('Search members', { exact: true }).fill('004');
+  await page
+    .locator('.suggestions button')
+    .filter({ hasText: 'Account ID 004' })
+    .click();
+  await page.getByRole('button', { name: 'Discard & change member' }).click();
+  await expect(page.locator('#deposit')).toHaveValue('');
+  await expect(page.locator('.entry-card .account')).toContainText(
+    'Account ID 004',
+  );
+  await page.locator('#deposit').fill('20,000');
+  await page.locator('#loanInstalment').fill('5,000');
+  await page.locator('#withdrawal').focus();
+  await page.screenshot({
+    path: join(evidence, 'after-agent-mobile-320.png'),
+    fullPage: true,
+  });
+});
+
+test('viewer records and undoes through the real audited operations', async ({
+  page,
+}) => {
+  await login(page, 'viewer');
+  const row = page
+    .locator('.entry-row')
+    .filter({ hasText: 'Loan instalment' })
+    .first();
+  await row.getByRole('button', { name: 'Mark recorded' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Undo recording check', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: 'Undo recording check', exact: true })
+    .click();
+  await page.getByRole('button', { name: 'Undo check', exact: true }).click();
+  await expect(
+    page.locator('.entry-row').filter({ hasText: 'Loan instalment' }).first(),
+  ).toContainText('Unrecorded');
+  await page
+    .getByRole('combobox', { name: 'Status', exact: true })
+    .selectOption('all');
+  await noOverflow(page);
+  await page.screenshot({
+    path: join(evidence, 'after-viewer-mobile.png'),
+    fullPage: true,
+  });
+});
+
+test('owner previews old and new values, applies a reserved directory transaction and rejects cross-ID reuse', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await login(page, 'admin');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'update.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      'Account Id,Account Number,Account Name\n006,000401001006,Updated Example Six\n9001,009001,New Example Account\n',
+    ),
+  });
+  await expect(
+    page.getByRole('heading', { name: 'Review import' }),
+  ).toBeVisible();
+  await expect(page.locator('del')).toContainText('Example Member 6');
+  await page.getByRole('button', { name: 'Apply updates' }).click();
+  await expect(
+    page.getByText('Member directory updated.', { exact: true }),
+  ).toBeVisible({ timeout: 100_000 });
+  await page.getByLabel('Search directory', { exact: true }).fill('9001');
+  await expect(page.locator('.directory-list')).toContainText(
+    'New Example Account',
+  );
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'collision.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      'Account Id,Account Number,Account Name\n9002,009001,Conflict\n',
+    ),
+  });
+  await expect(
+    page.getByRole('button', { name: 'Apply updates' }),
+  ).toBeDisabled();
+  await expect(page.getByRole('alert')).toContainText('already assigned');
+});
+
+test('blocked Web Storage permits memory-only sign-in and safely blocks financial submission', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    for (const name of ['localStorage', 'sessionStorage'])
+      Object.defineProperty(window, name, {
+        get() {
+          throw new DOMException('Blocked', 'SecurityError');
+        },
+      });
+  });
+  await login(page);
+  await select(page);
+  await page.locator('#deposit').fill('10,000');
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm & save' }).click();
+  await page.getByRole('button', { name: 'Back / edit' }).click();
+  await expect(page.getByRole('alert')).toContainText(
+    'cannot retain a save reference',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Review entry', exact: true }),
+  ).toBeEnabled();
+});
+
+test('offline and operational rollover stop writes without replaying the draft', async ({
+  page,
+  context,
+}) => {
+  await login(page);
+  await select(page);
+  await page.locator('#deposit').fill('20,000');
+  await context.setOffline(true);
+  await expect(
+    page.getByRole('button', { name: 'Review entry', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Offline' }),
+  ).toBeVisible();
+  await context.setOffline(false);
+  await expect(
+    page.getByRole('button', { name: 'Review entry', exact: true }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await page.clock.install();
+  await page.clock.setSystemTime(
+    new Date(bounds(workday()).end.getTime() + 1000),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.getByRole('button', { name: 'Confirm & save' }).click();
+  await expect(page.getByRole('alert')).toContainText('session has ended');
+  await expect(
+    page.getByRole('heading', { name: "Start today's session" }),
+  ).toBeVisible();
+});
+
+test('restored save reference checks the server and shows the saved account and amounts', async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (id) => sessionStorage.setItem('lct-pending-demo-agent', id),
+    `emulator_${workday().replaceAll('-', '')}`,
+  );
+  await login(page);
+  await expect(
+    page.getByRole('button', { name: 'Check save status' }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'Check save status' }).click();
+  await expect(
+    page.getByRole('region', { name: 'Saved entry receipt' }),
+  ).toContainText('Example Member 1');
+  await expect(
+    page.getByRole('region', { name: 'Saved entry receipt' }),
+  ).toContainText('25,000');
+  await expect(
+    page.getByRole('button', { name: 'Check save status' }),
+  ).toHaveCount(0);
+});
+
+test('a changed member invalidates an older import preview', async ({
+  page,
+  context,
+}) => {
+  await login(page, 'admin');
+  const csv = (name: string) => ({
+    name: 'change.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      `Account Id,Account Number,Account Name\n006,000401001006,${name}\n`,
+    ),
+  });
+  await page
+    .locator('input[type=file]')
+    .setInputFiles(csv('Outdated planned name'));
+  await expect(
+    page.getByRole('heading', { name: 'Review import' }),
+  ).toBeVisible();
+  const other = await context.newPage();
+  await login(other, 'admin');
+  await other
+    .locator('input[type=file]')
+    .setInputFiles(csv('Newer reviewed name'));
+  await other.getByRole('button', { name: 'Apply updates' }).click();
+  await expect(
+    other.getByText('Member directory updated.', { exact: true }),
+  ).toBeVisible();
+  await other.close();
+  await page.getByRole('button', { name: 'Apply updates' }).click();
+  await expect(page.getByRole('alert')).toContainText('changed since preview');
+  await page.getByLabel('Search directory', { exact: true }).fill('006');
+  await expect(page.locator('.directory-list')).toContainText(
+    'Newer reviewed name',
+  );
+});
+
+test('long identities reflow and collection, review, history and office share the same visual system', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+  await login(page);
+  await select(page, '007');
+  await expect(page.locator('.entry-card .account')).toContainText(
+    'deliberately long',
+  );
+  await noOverflow(page);
+  await page.screenshot({
+    path: join(evidence, 'after-long-account-mobile.png'),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({
+    path: join(evidence, 'after-agent-desktop.png'),
+    fullPage: true,
+  });
+  await page.locator('#deposit').fill('20,000');
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await page.screenshot({
+    path: join(evidence, 'after-review-desktop.png'),
+    fullPage: false,
+  });
+  await page.getByRole('button', { name: 'Back / edit' }).click();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Discard entry', exact: true })
+    .click();
+  await page.getByRole('link', { name: 'History', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Session history' }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: join(evidence, 'after-history-desktop.png'),
+    fullPage: true,
+  });
+});

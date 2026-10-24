@@ -4,10 +4,13 @@ export interface ImportRow {
   accountNumber: string;
   fullName: string;
   action: 'Add' | 'Update' | 'Unchanged';
+  previous?: { accountNumber: string; fullName: string; fingerprint: string };
 }
 export interface ImportPlan {
   rows: ImportRow[];
   errors: string[];
+  existing?: Member[];
+  reserved?: string[];
 }
 export function csvRows(text: string): string[][] {
   const rows: string[][] = [];
@@ -76,10 +79,28 @@ export function planImport(text: string, existing: Member[]): ImportPlan {
     }
     seen.add(memberId);
     const old = existing.find((m) => m.memberId === memberId);
+    const owner = existing.find(
+      (m) => m.accountNumber === accountNumber && m.memberId !== memberId,
+    );
+    if (owner) {
+      errors.push(
+        `${prefix}: account number ${accountNumber} is already assigned to account ID ${owner.memberId}. Numbers cannot move between IDs in a bulk import.`,
+      );
+      continue;
+    }
     rows.push({
       memberId,
       accountNumber,
       fullName,
+      ...(old
+        ? {
+            previous: {
+              accountNumber: old.accountNumber,
+              fullName: old.fullName,
+              fingerprint: memberFingerprint(old),
+            },
+          }
+        : {}),
       action: !old
         ? 'Add'
         : old.fullName !== fullName || old.accountNumber !== accountNumber
@@ -98,5 +119,14 @@ export function planImport(text: string, existing: Member[]): ImportPlan {
     numbers.set(number, id);
   }
   if (!rows.length && !errors.length) errors.push('No account rows found.');
-  return { rows, errors };
+  return { rows, errors, existing };
 }
+
+export const memberFingerprint = (m: Member) =>
+  JSON.stringify([
+    m.memberId,
+    m.accountNumber,
+    m.fullName,
+    m.active,
+    m.updatedAt?.toMillis?.() ?? 0,
+  ]);

@@ -28,27 +28,35 @@ for (const role of ['agent', 'viewer', 'admin'] as const) {
       displayName: `Demo ${role}`,
     });
   }
-  await db
-    .doc(`users/${uid}`)
-    .set({
-      username,
-      displayName: `Demo ${role}`,
-      role,
-      active: true,
-      createdAt: FieldValue.serverTimestamp(),
-    });
+  await db.doc(`users/${uid}`).set({
+    username,
+    displayName: `Demo ${role}`,
+    role,
+    active: true,
+    createdAt: FieldValue.serverTimestamp(),
+  });
 }
-for (let i = 1; i <= 6; i++)
-  await db
-    .doc(`members/${String(i).padStart(3, '0')}`)
-    .set({
-      memberId: String(i).padStart(3, '0'),
-      accountNumber: `000401001${String(i).padStart(3, '0')}`,
-      fullName: `Example Member ${i}`,
-      searchName: `example member ${i}`,
-      active: true,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+const count = Number(process.env.LCT_SEED_MEMBERS ?? 6);
+if (!Number.isInteger(count) || count < 6 || count > 1000)
+  throw new Error('Seed member count must be 6–1000.');
+for (let i = 1; i <= count; i++)
+  await db.doc(`members/${String(i).padStart(3, '0')}`).set({
+    memberId: String(i).padStart(3, '0'),
+    accountNumber:
+      i === 7
+        ? '0000000000000000000000000000000000000007'
+        : `000401001${String(i).padStart(3, '0')}`,
+    fullName:
+      i === 7
+        ? 'Example Member with a deliberately long synthetic name for narrow screen testing'
+        : `Example Member ${i}`,
+    searchName:
+      i === 7
+        ? 'example member with a deliberately long synthetic name for narrow screen testing'
+        : `example member ${i}`,
+    active: true,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 const sid = `demo-agent_${day}`,
   ref = db.doc(`sessions/${sid}`);
 if (!(await ref.get()).exists) {
@@ -81,21 +89,19 @@ if (!(await ref.get()).exists) {
     recordingRevision: 0,
     recordingHistory: {},
   });
-  await db
-    .doc(`entries/${entryId}`)
-    .set({
-      entryId,
-      sessionId: sid,
-      agentId: 'demo-agent',
-      agentNameSnapshot: 'Demo agent',
-      workday: day,
-      memberId: '001',
-      accountNumberSnapshot: '000401001001',
-      memberNameSnapshot: 'Example Member 1',
-      createdAt: at,
-      financialRevision: 1,
-      lines: { deposit: line(10000), loanInstalment: line(25000) },
-    });
+  await db.doc(`entries/${entryId}`).set({
+    entryId,
+    sessionId: sid,
+    agentId: 'demo-agent',
+    agentNameSnapshot: 'Demo agent',
+    workday: day,
+    memberId: '001',
+    accountNumberSnapshot: '000401001001',
+    memberNameSnapshot: 'Example Member 1',
+    createdAt: at,
+    financialRevision: 1,
+    lines: { deposit: line(10000), loanInstalment: line(25000) },
+  });
 }
 console.log(
   'Local emulator demo ready. Usernames: demo.agent, demo.viewer, demo.admin. Password: CollectDemo123!',

@@ -111,9 +111,10 @@ service cloud.firestore {
         && b.recordingHistory.size() == a.recordingHistory.size() + 1
         && b.recordingHistory.diff(a.recordingHistory).affectedKeys().hasOnly([key])
         && b.recordingHistory[key].keys().hasAll(['by','at','recorded'])
-        && b.recordingHistory[key].keys().hasOnly(['by','at','recorded'])
+        && b.recordingHistory[key].keys().hasOnly(['by','at','recorded','actorName'])
         && b.recordingHistory[key].by == request.auth.uid && b.recordingHistory[key].at == request.time
-        && b.recordingHistory[key].recorded == b.recorded;
+        && b.recordingHistory[key].recorded == b.recorded
+        && (!('actorName' in b.recordingHistory[key]) || (b.recordingHistory[key].actorName is string && b.recordingHistory[key].actorName.size() > 0 && b.recordingHistory[key].actorName.size() <= 120 && b.recordingHistory[key].actorName == profile().displayName));
     }
     match /users/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
@@ -128,8 +129,19 @@ service cloud.firestore {
         && request.resource.data.accountNumber is string && request.resource.data.accountNumber.matches('^[0-9]{1,40}$')
         && request.resource.data.fullName is string && request.resource.data.fullName.size() > 0 && request.resource.data.fullName.size() <= 120
         && request.resource.data.searchName == request.resource.data.fullName.lower()
-        && request.resource.data.active is bool && request.resource.data.updatedAt == request.time;
+        && request.resource.data.active is bool && request.resource.data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/accountNumbers/$(request.resource.data.accountNumber)).data.memberId == id;
       allow delete: if false;
+    }
+    match /accountNumbers/{number} {
+      allow read: if role('admin');
+      allow create: if role('admin') && number.matches('^[0-9]{1,40}$')
+        && request.resource.data.keys().hasAll(['memberId','updatedAt'])
+        && request.resource.data.keys().hasOnly(['memberId','updatedAt'])
+        && request.resource.data.memberId is string && request.resource.data.memberId.matches('^[0-9]{1,32}$')
+        && request.resource.data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/members/$(request.resource.data.memberId)).data.accountNumber == number;
+      allow update, delete: if false;
     }
     match /sessions/{id} {
       allow read: if role('viewer') || (role('agent') && (resource == null ? id == request.auth.uid + '_' + dayString(request.time + duration.value(1,'h')) : resource.data.agentId == request.auth.uid));

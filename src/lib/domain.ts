@@ -89,3 +89,15 @@ export function searchMembers<
     .sort((a, b) => rank(a) - rank(b) || a.fullName.localeCompare(b.fullName))
     .slice(0, 8);
 }
+
+export const dateTimeLabel = (value?: { toDate(): Date } | null) =>
+  value
+    ? new Intl.DateTimeFormat('en-UG', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Africa/Kampala',
+      }).format(value.toDate()) + ' EAT'
+    : '—';

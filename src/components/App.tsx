@@ -1,29 +1,21 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  type User,
-} from 'firebase/auth';
-import {
-  collection,
   doc,
-  getDocsFromServer,
   onSnapshot,
   orderBy,
-  query,
-  runTransaction,
-  serverTimestamp,
+  limit,
   where,
   type QueryConstraint,
 } from 'firebase/firestore';
-import { auth, db, logout } from '../lib/firebase';
+import { auth, db, logout, memoryOnlySession } from '../lib/firebase';
 import {
   amount,
   dayLabel,
   money,
   searchMembers,
   timeLabel,
-  usernameEmail,
+  dateTimeLabel,
   workday,
 } from '../lib/domain';
 import {
@@ -44,128 +36,33 @@ import {
   startSession,
   voidEntryLine,
 } from '../lib/operations';
-import { planImport, type ImportPlan } from '../lib/import';
+
 import Icon from './Icon';
+import Modal from './Modal';
+import { Account, Status } from './Account';
+import { useRecords } from '../hooks/useRecords';
+import { storage } from '../lib/storage';
+import { message } from '../lib/errors';
+import SearchField from './SearchField';
+const Login = lazy(() => import('./Login'));
+const MemberAdmin = lazy(() => import('./MemberAdmin'));
 
 const HOME = { agent: '/agent/', viewer: '/viewer/', admin: '/admin/' };
-const EMPTY_AMOUNTS = { deposit: '', withdrawal: '', loanInstalment: '' };
-const message = (error: unknown) => {
-  const code = (error as { code?: string })?.code ?? '';
-  if (code.includes('permission-denied'))
-    return 'Access was denied. Ask the owner to check your account permissions and active status.';
-  if (code.includes('auth/'))
-    return 'Sign-in failed. Check your username and password, or contact the owner.';
-  return error instanceof Error
-    ? error.message
-    : 'Could not complete this action. Check your connection and try again.';
+type Receipt = Pick<
+  Entry,
+  | 'entryId'
+  | 'memberId'
+  | 'memberNameSnapshot'
+  | 'accountNumberSnapshot'
+  | 'agentNameSnapshot'
+  | 'workday'
+> & {
+  createdAt?: Entry['createdAt'];
+  lines: Partial<Record<LineType, { amount: number }>>;
 };
-function useRecords<T>(
-  name: string,
-  constraints: QueryConstraint[],
-  key: string,
-  enabled: boolean,
-) {
-  const [result, setResult] = useState<{
-    data: T[];
-    loading: boolean;
-    cached: boolean;
-    error: string;
-  }>({ data: [], loading: true, cached: true, error: '' });
-  useEffect(() => {
-    setResult({ data: [], loading: enabled, cached: true, error: '' });
-    if (!enabled) return;
-    return onSnapshot(
-      query(collection(db(), name), ...constraints),
-      { includeMetadataChanges: true },
-      (snap) => {
-        // Never expose a financial/status change until its server acknowledgement.
-        if (snap.metadata.hasPendingWrites) return;
-        setResult({
-          data: snap.docs.map((d) => d.data() as T),
-          loading: false,
-          cached: snap.metadata.fromCache,
-          error: '',
-        });
-      },
-      (e) =>
-        setResult({
-          data: [],
-          loading: false,
-          cached: true,
-          error: message(e),
-        }),
-    );
-    // Query identity is represented by key; arrays are rebuilt on render.
-  }, [name, key, enabled]);
-  return result;
-}
-function Modal({
-  title,
-  children,
-  onClose,
-}: {
-  title: string;
-  children: ReactNode;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const d = ref.current;
-    d?.showModal();
-    const cancel = (e: Event) => {
-      e.preventDefault();
-      onClose();
-    };
-    d?.addEventListener('cancel', cancel);
-    return () => {
-      d?.removeEventListener('cancel', cancel);
-      d?.close();
-    };
-  }, []);
-  return (
-    <dialog ref={ref} aria-labelledby="modal-title">
-      <div className="dialog-head">
-        <h2 id="modal-title">{title}</h2>
-        <button
-          className="icon-button"
-          aria-label="Close dialog"
-          onClick={onClose}
-        >
-          <Icon name="x-lg" />
-        </button>
-      </div>
-      {children}
-    </dialog>
-  );
-}
-const Account = ({
-  name,
-  number,
-  id,
-}: {
-  name: string;
-  number: string;
-  id: string;
-}) => (
-  <div className="account">
-    <strong>{name}</strong>
-    <span>Account no. {number}</span>
-    <span>Account ID {id}</span>
-  </div>
-);
-const Status = ({ row }: { row: Row }) => (
-  <span
-    className={`status ${row.line.state === 'voided' ? 'voided' : row.line.recorded ? 'recorded' : ''}`}
-  >
-    {row.line.state === 'voided'
-      ? 'Voided'
-      : row.line.recorded
-        ? 'Recorded'
-        : 'Unrecorded'}
-  </span>
-);
-
-export default function App({ route }: { route: string }) {
+const EMPTY_AMOUNTS = { deposit: '', withdrawal: '', loanInstalment: '' };
+export default function App({ route: initialRoute }: { route: string }) {
+  const [route, setRoute] = useState(initialRoute);
   const [user, setUser] = useState<User | null>(null),
     [profile, setProfile] = useState<Profile | null>(null),
     [authReady, setAuthReady] = useState(false),
@@ -196,9 +93,89 @@ export default function App({ route }: { route: string }) {
     [type, setType] = useState('all'),
     [status, setStatus] = useState(route === 'viewer' ? 'unrecorded' : 'all'),
     [agent, setAgent] = useState('all');
-  const [importPlan, setImportPlan] = useState<ImportPlan | null>(null),
-    [importName, setImportName] = useState(''),
-    [importProgress, setImportProgress] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<LineType, string>>
+  >({});
+  const [guard, setGuard] = useState<{
+    title: string;
+    body: string;
+    label: string;
+    run: () => void;
+  } | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [undoRow, setUndoRow] = useState<Row | null>(null);
+  const [historyCount, setHistoryCount] = useState(20);
+  const dirty = TYPES.some((t) => values[t].trim() !== '');
+  const depositRef = useRef<HTMLInputElement>(null);
+  const mutation = useRef(false);
+  const allowUnload = useRef(false);
+  useEffect(() => {
+    if (member && !uncertain) depositRef.current?.focus();
+  }, [member?.memberId]);
+  function protect(
+    run: () => void,
+    title = 'Discard this entry?',
+    body = 'These amounts have not been saved. Stay to finish the entry, or discard them.',
+    label = 'Discard entry',
+  ) {
+    if (busy || uncertain) {
+      setError(
+        uncertain
+          ? 'Check the previous save before leaving this screen.'
+          : 'Please wait while this change is confirmed.',
+      );
+      return;
+    }
+    if (dirty) setGuard({ title, body, label, run });
+    else run();
+  }
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!allowUnload.current && (dirty || busy || uncertain)) {
+        event.preventDefault();
+        Reflect.set(event, 'returnValue', '');
+      }
+    };
+    const navigate = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
+      const anchor = (event.target as Element).closest?.(
+        'a[href]',
+      ) as HTMLAnchorElement | null;
+      if (
+        !anchor ||
+        anchor.target === '_blank' ||
+        anchor.hasAttribute('download') ||
+        (!dirty && !busy && !uncertain)
+      )
+        return;
+      if (
+        anchor.hash &&
+        anchor.origin === window.location.origin &&
+        anchor.pathname === window.location.pathname &&
+        anchor.search === window.location.search
+      )
+        return;
+      event.preventDefault();
+      protect(() => {
+        allowUnload.current = true;
+        window.location.assign(anchor.href);
+      });
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    document.addEventListener('click', navigate, true);
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload);
+      document.removeEventListener('click', navigate, true);
+    };
+  }, [dirty, busy, uncertain]);
   const authorized = !!user && !!profile?.active;
   useEffect(
     () =>
@@ -220,6 +197,7 @@ export default function App({ route }: { route: string }) {
       doc(db(), 'users', user.uid),
       (snap) => {
         if (!snap.exists()) {
+          setProfile(null);
           setProfileError(
             'Your login has no application profile yet. Ask the owner to finish account setup.',
           );
@@ -240,9 +218,20 @@ export default function App({ route }: { route: string }) {
             : p.role === 'viewer'
               ? ['viewer']
               : ['admin'];
-        if (!allowed.includes(route)) window.location.replace(HOME[p.role]);
+        if (!allowed.includes(route)) {
+          // Complete sign-in without destroying an in-memory Auth session.
+          if (route === 'login') {
+            window.history.replaceState(null, '', HOME[p.role]);
+            setRoute(p.role);
+            setStatus(p.role === 'viewer' ? 'unrecorded' : 'all');
+            document.title = 'LCT Collect';
+          } else window.location.replace(HOME[p.role]);
+        }
       },
-      (e) => setProfileError(message(e)),
+      (e) => {
+        setProfile(null);
+        setProfileError(message(e));
+      },
     );
   }, [user?.uid]);
   useEffect(() => {
@@ -263,7 +252,7 @@ export default function App({ route }: { route: string }) {
   }, []);
   useEffect(() => {
     if (user) {
-      const id = sessionStorage.getItem(`lct-pending-${user.uid}`);
+      const id = storage.get('session', `lct-pending-${user.uid}`);
       if (id) {
         pendingId.current = id;
         setUncertain(true);
@@ -277,12 +266,17 @@ export default function App({ route }: { route: string }) {
     'members',
     isAdmin ? [] : [where('active', '==', true)],
     `${user?.uid}/${profile?.role}`,
-    authorized,
+    authorized && (isAgent || isAdmin),
   );
   const sessions = useRecords<Session>(
     'sessions',
-    [where('agentId', '==', user?.uid ?? ''), orderBy('workday', 'desc')],
-    `${user?.uid}`,
+    [
+      where('agentId', '==', user?.uid ?? ''),
+      ...(route === 'history'
+        ? [orderBy('workday', 'desc'), limit(historyCount)]
+        : [where('workday', '==', today)]),
+    ],
+    `${user?.uid}/${route}/${today}/${historyCount}`,
     authorized && isAgent,
   );
   const entryDay = route === 'history' ? historyDay : isViewer ? date : today;
@@ -294,14 +288,14 @@ export default function App({ route }: { route: string }) {
     'entries',
     constraints,
     `${user?.uid}/${entryDay}/${route}`,
-    authorized && !isAdmin,
+    authorized && !isAdmin && !!entryDay,
   );
   const session = sessions.data.find((s) => s.workday === today);
   const cached = isAdmin
     ? members.cached
     : isViewer
       ? entries.cached
-      : members.cached || sessions.cached || entries.cached;
+      : members.cached || sessions.cached || (!!entryDay && entries.cached);
   const writable = network && !cached && !busy;
   useEffect(() => {
     if (!cached)
@@ -314,6 +308,8 @@ export default function App({ route }: { route: string }) {
       );
   }, [cached, members.data, entries.data, sessions.data]);
   async function action(fn: () => Promise<unknown>, success: string) {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(true);
     setError('');
     setNotice('');
@@ -324,10 +320,12 @@ export default function App({ route }: { route: string }) {
     } catch (e) {
       setError(message(e));
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   }
   async function signOutNow() {
+    allowUnload.current = true;
     setProfile(null);
     setBusy(true);
     try {
@@ -343,11 +341,21 @@ export default function App({ route }: { route: string }) {
     try {
       if (!member) throw new Error('Select a member account first.');
       if (!session) throw new Error('Start a session first.');
-      const parsed = {
-        deposit: amount(values.deposit, true),
-        withdrawal: amount(values.withdrawal, true),
-        loanInstalment: amount(values.loanInstalment, true),
-      };
+      const parsed = { deposit: 0, withdrawal: 0, loanInstalment: 0 };
+      const errors: Partial<Record<LineType, string>> = {};
+      for (const t of TYPES) {
+        try {
+          parsed[t] = amount(values[t], true);
+        } catch (e) {
+          errors[t] = message(e);
+        }
+      }
+      setFieldErrors(errors);
+      const invalid = TYPES.find((t) => errors[t]);
+      if (invalid) {
+        document.getElementById(invalid)?.focus();
+        return;
+      }
       if (!TYPES.some((t) => parsed[t] > 0))
         throw new Error('Enter at least one amount.');
       if (
@@ -367,17 +375,18 @@ export default function App({ route }: { route: string }) {
     }
   }
   function clearForm() {
-    if (user) sessionStorage.removeItem(`lct-pending-${user.uid}`);
+    if (user) storage.remove('session', `lct-pending-${user.uid}`);
     setMember(null);
     setMemberQuery('');
     setValues({ ...EMPTY_AMOUNTS });
+    setFieldErrors({});
     pendingId.current = '';
     setError('');
     setNotice('');
     document.getElementById('member-search')?.focus();
   }
   async function commit() {
-    if (!member || !user || !profile) return;
+    if (!member || !user || !profile || mutation.current) return;
     if (!session || session.sessionId !== reviewSessionId) {
       setModal(null);
       setError(
@@ -385,9 +394,15 @@ export default function App({ route }: { route: string }) {
       );
       return;
     }
+    if (!storage.set('session', `lct-pending-${user.uid}`, pendingId.current)) {
+      setError(
+        'This browser cannot retain a save reference. Enable site storage before saving money, then review again.',
+      );
+      return;
+    }
+    mutation.current = true;
     setBusy(true);
     setError('');
-    sessionStorage.setItem(`lct-pending-${user.uid}`, pendingId.current);
     try {
       await saveEntry(
         pendingId.current,
@@ -397,10 +412,26 @@ export default function App({ route }: { route: string }) {
         user.uid,
         profile,
       );
-      sessionStorage.removeItem(`lct-pending-${user.uid}`);
+      storage.remove('session', `lct-pending-${user.uid}`);
       setUncertain(false);
       setModal(null);
+      const savedId = pendingId.current;
       clearForm();
+      const savedLines = Object.fromEntries(
+        TYPES.filter((t) => reviewValues[t] > 0).map((t) => [
+          t,
+          { amount: reviewValues[t], state: 'active', recorded: false },
+        ]),
+      );
+      setReceipt({
+        entryId: savedId,
+        memberId: member.memberId,
+        memberNameSnapshot: member.fullName,
+        accountNumberSnapshot: member.accountNumber,
+        agentNameSnapshot: profile.displayName,
+        workday: session.workday,
+        lines: savedLines,
+      });
       setNotice('Entry saved.');
     } catch (e) {
       setUncertain(true);
@@ -409,19 +440,22 @@ export default function App({ route }: { route: string }) {
         `Save not confirmed. Check its status before retrying. ${message(e)}`,
       );
     } finally {
+      mutation.current = false;
       setBusy(false);
     }
   }
   async function checkSave() {
     await action(async () => {
-      if (await findSubmission(pendingId.current)) {
-        sessionStorage.removeItem(`lct-pending-${user!.uid}`);
+      const saved = await findSubmission(pendingId.current);
+      if (saved) {
+        setReceipt(saved);
+        storage.remove('session', `lct-pending-${user!.uid}`);
         setUncertain(false);
         clearForm();
       } else {
         setUncertain(false);
         throw new Error(
-          'No saved entry found. Your original submission ID is retained; review and retry when ready.',
+          'No saved entry was found. Your amounts have not been sent again. Review the entry to retry safely.',
         );
       }
     }, 'Previous entry is saved.');
@@ -437,6 +471,14 @@ export default function App({ route }: { route: string }) {
       (b.entry.createdAt?.toMillis() ?? 0) -
       (a.entry.createdAt?.toMillis() ?? 0),
   );
+  const liveSelected =
+    selectedRow &&
+    allRows.find(
+      (r) =>
+        r.entry.entryId === selectedRow.entry.entryId &&
+        r.type === selectedRow.type,
+    );
+  const detailRow = liveSelected ?? selectedRow;
   const validRows = allRows.filter((r) => r.line.state === 'active');
   const filtered = allRows.filter(
     (r) =>
@@ -461,16 +503,7 @@ export default function App({ route }: { route: string }) {
     return (
       <>
         <div className="filter-grid">
-          <label className="search-field">
-            <span className="sr-only">Search entries</span>
-            <Icon name="search" />
-            <input
-              aria-label="Search entries"
-              placeholder="Search name, account ID or number"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </label>
+          <SearchField value={q} onChange={setQ} label="Search entries" />
           <label>
             Status
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -547,7 +580,7 @@ export default function App({ route }: { route: string }) {
               </span>
               <span>
                 {timeLabel(row.entry.createdAt)}
-                {viewer ? ' · ' + row.entry.agentNameSnapshot : ''}
+                {''}
               </span>
             </button>
             <div className="entry-kind">
@@ -568,14 +601,17 @@ export default function App({ route }: { route: string }) {
                     setModal('undo');
                   } else
                     void action(
-                      () =>
-                        setRecorded(
+                      async () => {
+                        await setRecorded(
                           row.entry.entryId,
                           row.type,
                           true,
                           user!.uid,
-                        ),
-                      'Marked recorded in Ssentezo.',
+                          profile!.displayName,
+                        );
+                        setUndoRow(row);
+                      },
+                      `Recorded: ${row.entry.memberNameSnapshot} · ${LABELS[row.type]} · UGX ${money(row.line.amount)}.`,
                     );
                 }}
               >
@@ -598,69 +634,24 @@ export default function App({ route }: { route: string }) {
       </div>
     );
   }
-  async function readFile(file?: File) {
-    if (!file) return;
-    setError('');
-    setImportPlan(null);
-    setImportName(file.name);
-    try {
-      if (!file.name.toLowerCase().endsWith('.csv') || file.size > 2_000_000)
-        throw new Error('Choose a CSV export up to 2 MB.');
-      const [text, existing] = await Promise.all([
-        file.text(),
-        getDocsFromServer(collection(db(), 'members')),
-      ]);
-      setImportPlan(
-        planImport(
-          text,
-          existing.docs.map((d) => d.data() as Member),
-        ),
-      );
-    } catch (e) {
-      setError(message(e));
-    }
-  }
-  async function applyImport() {
-    if (!importPlan || importPlan.errors.length) return;
-    const rows = importPlan.rows.filter((r) => r.action !== 'Unchanged');
-    await action(async () => {
-      for (let offset = 0; offset < rows.length; offset += 50) {
-        if (!navigator.onLine)
-          throw new Error(
-            `Connection lost. ${offset} accounts applied; upload the file again to preview the remaining changes.`,
-          );
-        const group = rows.slice(offset, offset + 50);
-        await runTransaction(db(), async (tx) => {
-          const refs = group.map((r) => doc(db(), 'members', r.memberId));
-          const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
-          group.forEach((r, i) =>
-            tx.set(refs[i], {
-              memberId: r.memberId,
-              accountNumber: r.accountNumber,
-              fullName: r.fullName,
-              searchName: r.fullName.toLowerCase(),
-              active: snaps[i].exists() ? snaps[i].data()!.active : true,
-              updatedAt: serverTimestamp(),
-            }),
-          );
-        });
-        setImportProgress(
-          `${Math.min(offset + 50, rows.length)} of ${rows.length} accounts updated`,
-        );
-      }
-      setImportPlan(null);
-      setImportName('');
-    }, 'Member directory updated.');
-  }
   if (!authReady)
     return <div className="loading">Connecting to LCT Collect…</div>;
-  if (!user) return <Login notice={profileError} />;
+  if (!user)
+    return (
+      <Suspense fallback={<p role="status">Loading sign in…</p>}>
+        <Login notice={profileError} />
+      </Suspense>
+    );
   if (!profile)
     return (
-      <main className="login-shell">
+      <main tabIndex={-1} id="main-content" className="login-shell">
         <h1>LCT Collect</h1>
         <p role="status">{profileError || 'Loading your access…'}</p>
-        <button className="button" disabled={busy} onClick={signOutNow}>
+        <button
+          className="button"
+          disabled={busy}
+          onClick={() => protect(() => void signOutNow())}
+        >
           Sign out
         </button>
       </main>
@@ -707,7 +698,18 @@ export default function App({ route }: { route: string }) {
           </nav>
         </div>
       </header>
-      <main className={isViewer || isAdmin ? 'page wide' : 'page'}>
+      <main
+        tabIndex={-1}
+        id="main-content"
+        className={isViewer || isAdmin ? 'page wide' : 'page'}
+      >
+        {memoryOnlySession && (
+          <p className="alert" role="status">
+            Site storage is unavailable. Sign-in lasts while this page is open.
+            Enable site storage to save collection entries or stay signed in
+            when changing pages.
+          </p>
+        )}
         {(cached || !network) && (
           <div className="connection" role="status">
             <Icon name="wifi-off" />
@@ -733,10 +735,69 @@ export default function App({ route }: { route: string }) {
             {notice}
           </div>
         )}
+        {undoRow && (
+          <div className="receipt" role="status">
+            <p>
+              Last recorded: <strong>{undoRow.entry.memberNameSnapshot}</strong>{' '}
+              · {LABELS[undoRow.type]} · UGX {money(undoRow.line.amount)}
+            </p>
+            <button
+              className="button outline small"
+              disabled={!writable}
+              onClick={() => {
+                setSelectedRow(undoRow);
+                setModal('undo');
+                setUndoRow(null);
+              }}
+            >
+              Undo recording check
+            </button>
+          </div>
+        )}
+        {receipt && (
+          <section className="receipt" aria-label="Saved entry receipt">
+            <div className="receipt-heading">
+              <Icon name="check2" />
+              <h2>Entry saved</h2>
+              <button
+                className="icon-button"
+                aria-label="Dismiss saved entry"
+                onClick={() => setReceipt(null)}
+              >
+                <Icon name="x-lg" />
+              </button>
+            </div>
+            <Account
+              name={receipt.memberNameSnapshot}
+              number={receipt.accountNumberSnapshot}
+              id={receipt.memberId}
+            />
+            <ul>
+              {TYPES.filter((t) => receipt.lines[t]).map((t) => (
+                <li key={t}>
+                  {LABELS[t]}{' '}
+                  <strong>UGX {money(receipt.lines[t]!.amount)}</strong>
+                </li>
+              ))}
+            </ul>
+            <p>
+              {dayLabel(receipt.workday)}
+              {receipt.createdAt
+                ? ` · ${timeLabel(receipt.createdAt)}`
+                : ' · Saved just now'}
+            </p>
+            <a className="back-link" href="/agent/recent/">
+              View recent entries <Icon name="chevron-right" />
+            </a>
+          </section>
+        )}
         {uncertain && (
           <div className="alert">
             <strong>Previous save needs checking.</strong>
-            <p>Keep the same submission ID to avoid a duplicate.</p>
+            <p>
+              Check whether your previous entry reached the notebook before
+              entering that money again.
+            </p>
             <button
               className="button outline"
               disabled={!writable}
@@ -759,6 +820,7 @@ export default function App({ route }: { route: string }) {
                   valid.
                 </p>
                 <form
+                  noValidate
                   onSubmit={(e) => {
                     e.preventDefault();
                     const field = new FormData(e.currentTarget).get(
@@ -791,7 +853,8 @@ export default function App({ route }: { route: string }) {
                 >
                   <h1>Expected cash</h1>
                   <div className="cash-number">
-                    UGX {money(session.expectedCash)}
+                    <span>UGX</span>{' '}
+                    <strong>{money(session.expectedCash)}</strong>
                   </div>
                   <p>
                     {cached
@@ -822,20 +885,13 @@ export default function App({ route }: { route: string }) {
                 </section>
                 <section className="card find-card">
                   <h2>Find member</h2>
-                  <label className="search-field">
-                    <span className="sr-only">
-                      Search member by name, account ID or number
-                    </span>
-                    <Icon name="search" />
-                    <input
-                      id="member-search"
-                      placeholder="Search name, account ID or number"
-                      value={memberQuery}
-                      disabled={uncertain || busy}
-                      onChange={(e) => setMemberQuery(e.target.value)}
-                      autoComplete="off"
-                    />
-                  </label>
+                  <SearchField
+                    id="member-search"
+                    value={memberQuery}
+                    onChange={setMemberQuery}
+                    label="Search members"
+                    disabled={uncertain || busy}
+                  />
                   {memberQuery.trim() && (
                     <ul className="suggestions" aria-label="Matching accounts">
                       {searchMembers(members.data, memberQuery).map((m) => (
@@ -843,9 +899,25 @@ export default function App({ route }: { route: string }) {
                           <button
                             disabled={busy || uncertain}
                             onClick={() => {
-                              setMember(m);
-                              setMemberQuery('');
-                              document.getElementById('deposit')?.focus();
+                              const select = () => {
+                                if (member?.memberId !== m.memberId) {
+                                  setValues({ ...EMPTY_AMOUNTS });
+                                  setFieldErrors({});
+                                  pendingId.current = '';
+                                }
+                                setMember(m);
+                                setMemberQuery('');
+                              };
+                              if (member?.memberId === m.memberId) {
+                                setMemberQuery('');
+                                depositRef.current?.focus();
+                              } else
+                                protect(
+                                  select,
+                                  'Change member account?',
+                                  'Changing accounts discards the amounts entered for the current member. No money has been saved.',
+                                  'Discard & change member',
+                                );
                             }}
                           >
                             <Account
@@ -882,6 +954,7 @@ export default function App({ route }: { route: string }) {
                     </p>
                   )}
                   <form
+                    noValidate
                     onSubmit={(e) => {
                       e.preventDefault();
                       review();
@@ -903,34 +976,55 @@ export default function App({ route }: { route: string }) {
                           <span>UGX</span>
                           <input
                             id={t}
+                            ref={t === 'deposit' ? depositRef : undefined}
+                            aria-invalid={!!fieldErrors[t]}
+                            aria-describedby={
+                              fieldErrors[t] ? `${t}-error` : undefined
+                            }
                             inputMode="numeric"
                             aria-label={`${LABELS[t]} in UGX`}
                             placeholder="0"
                             disabled={!member || busy || uncertain}
                             value={values[t]}
-                            onChange={(e) =>
-                              setValues((v) => ({ ...v, [t]: e.target.value }))
-                            }
-                            onBlur={() => {
+                            onChange={(e) => {
+                              setValues((v) => ({ ...v, [t]: e.target.value }));
+                              setFieldErrors((errors) => ({
+                                ...errors,
+                                [t]: undefined,
+                              }));
+                            }}
+                            onBlur={(event) => {
                               try {
-                                if (values[t])
-                                  setValues((v) => ({
-                                    ...v,
-                                    [t]: money(amount(v[t], true)),
-                                  }));
-                              } catch {
-                                /* Validation is displayed on confirmation. */
+                                const text = event.currentTarget.value;
+                                const formatted = text
+                                  ? money(amount(text, true))
+                                  : '';
+                                setValues((v) => ({ ...v, [t]: formatted }));
+                                setFieldErrors((e) => ({
+                                  ...e,
+                                  [t]: undefined,
+                                }));
+                              } catch (e) {
+                                setFieldErrors((errors) => ({
+                                  ...errors,
+                                  [t]: message(e),
+                                }));
                               }
                             }}
                           />
                         </div>
+                        {fieldErrors[t] && (
+                          <p className="field-error" id={`${t}-error`}>
+                            {fieldErrors[t]}
+                          </p>
+                        )}
                       </div>
                     ))}
                     <div className="actions">
                       <button
                         type="button"
                         className="button outline"
-                        onClick={clearForm}
+                        onClick={() => protect(clearForm)}
                         disabled={busy || uncertain}
                       >
                         Cancel
@@ -939,7 +1033,7 @@ export default function App({ route }: { route: string }) {
                         className="button"
                         disabled={!writable || !member || uncertain}
                       >
-                        Confirm
+                        Review entry
                       </button>
                     </div>
                   </form>
@@ -999,14 +1093,16 @@ export default function App({ route }: { route: string }) {
                   <p className="empty">No saved sessions yet.</p>
                 ) : (
                   sessions.data.map((s) => {
-                    const rows = flatten(
-                      entries.data.filter((e) => e.sessionId === s.sessionId),
-                    ).filter((r) => r.line.state === 'active');
                     return (
                       <button
                         className="session-card"
                         key={s.sessionId}
-                        onClick={() => setHistoryDay(s.workday)}
+                        onClick={() => {
+                          setHistoryDay(s.workday);
+                          setQ('');
+                          setType('all');
+                          setStatus('all');
+                        }}
                       >
                         <div className="session-title">
                           <strong>{dayLabel(s.workday)}</strong>
@@ -1037,16 +1133,21 @@ export default function App({ route }: { route: string }) {
                             Expected closing cash{' '}
                             <strong>UGX {money(s.expectedCash)}</strong>
                           </span>
-                          <span>
-                            {rows.length} lines ·{' '}
-                            {rows.filter((r) => !r.line.recorded).length}{' '}
-                            {entries.cached ? 'saved ' : ''}outstanding
-                          </span>
+                          <span>View this workday’s entries</span>
                           <Icon name="chevron-right" />
                         </div>
                       </button>
                     );
                   })
+                )}
+                {sessions.data.length >= historyCount && (
+                  <button
+                    className="button outline full"
+                    disabled={sessions.loading}
+                    onClick={() => setHistoryCount((n) => n + 20)}
+                  >
+                    Load older sessions
+                  </button>
                 )}
               </div>
             )}
@@ -1055,7 +1156,6 @@ export default function App({ route }: { route: string }) {
         {isViewer && (
           <>
             <div className="page-heading">
-              <span className="eyebrow">Office checklist</span>
               <h1>Ssentezo register</h1>
               <p>Mark each line only after entering it in Ssentezo.</p>
             </div>
@@ -1106,146 +1206,17 @@ export default function App({ route }: { route: string }) {
           </>
         )}
         {isAdmin && (
-          <>
-            <div className="page-heading">
-              <span className="eyebrow">Owner administration</span>
-              <h1>Member directory</h1>
-              <p>
-                Upload a Ssentezo CSV export to add accounts and update names or
-                numbers.
-              </p>
-            </div>
-            <section className="card upload-card">
-              <Icon name="file-earmark-spreadsheet" />
-              <h2>Update from CSV</h2>
-              <p>
-                Only Account Id, Account Number and Account Name are used.
-                Existing accounts absent from a file are kept.
-              </p>
-              <label className="button upload-label">
-                <Icon name="upload" />
-                Choose CSV
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  disabled={!writable}
-                  onChange={(e) => void readFile(e.target.files?.[0])}
-                />
-              </label>
-              {importName && <p>{importName}</p>}
-            </section>
-            {importPlan && (
-              <section className="card">
-                <h2>Review import</h2>
-                <div className="import-counts">
-                  {(['Add', 'Update', 'Unchanged'] as const).map((a) => (
-                    <span key={a}>
-                      <strong>
-                        {importPlan.rows.filter((r) => r.action === a).length}
-                      </strong>{' '}
-                      {a}
-                    </span>
-                  ))}
-                </div>
-                {!!importPlan.errors.length && (
-                  <div className="alert error">
-                    <strong>Resolve these issues before importing:</strong>
-                    <ul>
-                      {importPlan.errors.slice(0, 20).map((e, i) => (
-                        <li key={i}>{e}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Account ID</th>
-                        <th>Account number</th>
-                        <th>Name</th>
-                        <th>Change</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {importPlan.rows.slice(0, 30).map((r) => (
-                        <tr key={r.memberId}>
-                          <td>{r.memberId}</td>
-                          <td>{r.accountNumber}</td>
-                          <td>{r.fullName}</td>
-                          <td>{r.action}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {importPlan.rows.length > 30 && (
-                  <p>
-                    Showing the first 30 of {importPlan.rows.length} validated
-                    rows.
-                  </p>
-                )}
-                <div className="actions">
-                  <button
-                    className="button outline"
-                    disabled={busy}
-                    onClick={() => setImportPlan(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="button"
-                    disabled={!writable || !!importPlan.errors.length}
-                    onClick={applyImport}
-                  >
-                    {busy ? 'Importing…' : 'Apply updates'}
-                  </button>
-                </div>
-                {importProgress && <p role="status">{importProgress}</p>}
-              </section>
-            )}
-            <section className="card">
-              <h2>
-                {members.data.length} {members.cached ? 'saved ' : ''}accounts
-              </h2>
-              <label className="search-field">
-                <Icon name="search" />
-                <input
-                  aria-label="Search directory"
-                  placeholder="Search name, account ID or number"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
-              </label>
-              <div className="directory-list">
-                {members.data
-                  .filter((m) =>
-                    `${m.fullName} ${m.memberId} ${m.accountNumber}`
-                      .toLowerCase()
-                      .includes(q.toLowerCase()),
-                  )
-                  .slice(0, 50)
-                  .map((m) => (
-                    <div key={m.memberId}>
-                      <Account
-                        name={m.fullName}
-                        number={m.accountNumber}
-                        id={m.memberId}
-                      />
-                      {!m.active && <span className="status">Inactive</span>}
-                    </div>
-                  ))}
-              </div>
-              <p className="muted">
-                Showing up to 50 matches. Historical entry details are preserved
-                when this directory changes.
-              </p>
-            </section>
-            <p className="muted">
-              User accounts and access profiles are managed manually in Firebase
-              by the owner.
-            </p>
-          </>
+          <Suspense
+            fallback={<p role="status">Loading member administration…</p>}
+          >
+            <MemberAdmin
+              writable={writable}
+              busy={busy}
+              members={members.data}
+              cached={members.cached}
+              action={action}
+            />
+          </Suspense>
         )}
         <footer>
           <span>
@@ -1256,12 +1227,40 @@ export default function App({ route }: { route: string }) {
                 : 'Agent'}{' '}
             · {profile.username}
           </span>
-          <button className="text-button" disabled={busy} onClick={signOutNow}>
+          <button
+            className="text-button"
+            disabled={busy}
+            onClick={() => protect(() => void signOutNow())}
+          >
             <Icon name="box-arrow-right" />
             Sign out
           </button>
         </footer>
       </main>
+      {guard && (
+        <Modal title={guard.title} onClose={() => setGuard(null)}>
+          <p>{guard.body}</p>
+          <div className="actions">
+            <button
+              className="button outline"
+              autoFocus
+              onClick={() => setGuard(null)}
+            >
+              Keep entry
+            </button>
+            <button
+              className="button danger"
+              onClick={() => {
+                const run = guard.run;
+                setGuard(null);
+                run();
+              }}
+            >
+              {guard.label}
+            </button>
+          </div>
+        </Modal>
+      )}
       {modal === 'review' && member && (
         <Modal title="Review entry" onClose={() => !busy && setModal(null)}>
           <Account
@@ -1269,6 +1268,11 @@ export default function App({ route }: { route: string }) {
             number={member.accountNumber}
             id={member.memberId}
           />
+          {error && (
+            <p className="alert error" role="alert">
+              {error}
+            </p>
+          )}
           <dl className="review-lines">
             {TYPES.filter((t) => reviewValues[t] > 0).map((t) => (
               <div key={t}>
@@ -1312,18 +1316,18 @@ export default function App({ route }: { route: string }) {
           </div>
         </Modal>
       )}
-      {modal === 'undo' && selectedRow && (
+      {modal === 'undo' && detailRow && (
         <Modal
           title="Undo recording check?"
           onClose={() => !busy && setModal(null)}
         >
           <Account
-            name={selectedRow.entry.memberNameSnapshot}
-            number={selectedRow.entry.accountNumberSnapshot}
-            id={selectedRow.entry.memberId}
+            name={detailRow.entry.memberNameSnapshot}
+            number={detailRow.entry.accountNumberSnapshot}
+            id={detailRow.entry.memberId}
           />
           <p>
-            {LABELS[selectedRow.type]} · UGX {money(selectedRow.line.amount)}
+            {LABELS[detailRow.type]} · UGX {money(detailRow.line.amount)}
           </p>
           <p>
             This changes the checklist only. It does not reverse anything in
@@ -1349,10 +1353,11 @@ export default function App({ route }: { route: string }) {
                 void action(
                   () =>
                     setRecorded(
-                      selectedRow.entry.entryId,
-                      selectedRow.type,
+                      detailRow.entry.entryId,
+                      detailRow.type,
                       false,
                       user.uid,
+                      profile.displayName,
                     ),
                   'Recording check undone.',
                 )
@@ -1363,60 +1368,63 @@ export default function App({ route }: { route: string }) {
           </div>
         </Modal>
       )}
-      {modal === 'line' && selectedRow && (
+      {modal === 'line' && detailRow && (
         <Modal title="Entry details" onClose={() => !busy && setModal(null)}>
           <Account
-            name={selectedRow.entry.memberNameSnapshot}
-            number={selectedRow.entry.accountNumberSnapshot}
-            id={selectedRow.entry.memberId}
+            name={detailRow.entry.memberNameSnapshot}
+            number={detailRow.entry.accountNumberSnapshot}
+            id={detailRow.entry.memberId}
           />
           <div className="detail-amount">
-            {LABELS[selectedRow.type]}
-            <strong>UGX {money(selectedRow.line.amount)}</strong>
+            {LABELS[detailRow.type]}
+            <strong>UGX {money(detailRow.line.amount)}</strong>
           </div>
-          <Status row={selectedRow} />
+          <Status row={detailRow} />
           <dl>
             <div>
               <dt>Operational date</dt>
-              <dd>{dayLabel(selectedRow.entry.workday)}</dd>
+              <dd>{dayLabel(detailRow.entry.workday)}</dd>
             </div>
             <div>
               <dt>Agent</dt>
-              <dd>{selectedRow.entry.agentNameSnapshot}</dd>
+              <dd>{detailRow.entry.agentNameSnapshot}</dd>
             </div>
             <div>
               <dt>Time</dt>
-              <dd>{timeLabel(selectedRow.entry.createdAt)}</dd>
+              <dd>{timeLabel(detailRow.entry.createdAt)}</dd>
             </div>
-            {selectedRow.line.recorded && (
+            {detailRow.line.recorded && (
               <div>
                 <dt>Recorded by</dt>
                 <dd className="break">
-                  {selectedRow.line.recordedBy} ·{' '}
-                  {timeLabel(selectedRow.line.recordedAt)}
+                  {detailRow.line.recordingHistory[
+                    String(detailRow.line.recordingRevision)
+                  ]?.actorName || `User ${detailRow.line.recordedBy}`}{' '}
+                  · {dateTimeLabel(detailRow.line.recordedAt)}
                 </dd>
               </div>
             )}
           </dl>
-          {selectedRow.line.state === 'voided' && (
+          {detailRow.line.state === 'voided' && (
             <div className="alert">
               <strong>Void reason</strong>
-              <p>{selectedRow.line.voidReason}</p>
+              <p>{detailRow.line.voidReason}</p>
             </div>
           )}
           {isAgent &&
           route !== 'history' &&
-          selectedRow.entry.workday === today &&
-          selectedRow.line.state === 'active' &&
-          !selectedRow.line.recorded ? (
+          detailRow.entry.workday === today &&
+          detailRow.line.state === 'active' &&
+          !detailRow.line.recorded ? (
             <form
+              noValidate
               onSubmit={(e) => {
                 e.preventDefault();
                 void action(
                   () =>
                     voidEntryLine(
-                      selectedRow.entry,
-                      selectedRow.type,
+                      detailRow.entry,
+                      detailRow.type,
                       reason,
                       user.uid,
                     ),
@@ -1425,7 +1433,7 @@ export default function App({ route }: { route: string }) {
               }}
             >
               <label>
-                Reason for voiding
+                Reason for voiding (3–500 characters)
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
@@ -1448,18 +1456,18 @@ export default function App({ route }: { route: string }) {
             isAgent && (
               <p className="muted">
                 This line is read-only
-                {selectedRow.line.recorded
+                {detailRow.line.recorded
                   ? ' because it is recorded in Ssentezo'
                   : '.'}
                 .
               </p>
             )
           )}
-          {!!selectedRow.line.recordingRevision && (
+          {!!detailRow.line.recordingRevision && (
             <details>
               <summary>Recording audit history</summary>
               <ol className="audit">
-                {Object.entries(selectedRow.line.recordingHistory)
+                {Object.entries(detailRow.line.recordingHistory)
                   .sort(([a], [b]) => Number(b) - Number(a))
                   .map(([id, event]) => (
                     <li key={id}>
@@ -1467,7 +1475,8 @@ export default function App({ route }: { route: string }) {
                         {event.recorded ? 'Marked recorded' : 'Check undone'}
                       </strong>
                       <span>
-                        {timeLabel(event.at)} · {event.by}
+                        {dateTimeLabel(event.at)} ·{' '}
+                        {event.actorName || `User ${event.by}`}
                       </span>
                     </li>
                   ))}
@@ -1482,111 +1491,5 @@ export default function App({ route }: { route: string }) {
         </Modal>
       )}
     </>
-  );
-}
-
-function Login({ notice }: { notice: string }) {
-  const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [show, setShow] = useState(false);
-  const [cacheWarning] = useState(() => {
-    const warning = sessionStorage.getItem('lct-cache-warning') ?? '';
-    sessionStorage.removeItem('lct-cache-warning');
-    return warning;
-  });
-  return (
-    <div className="login-page">
-      <header className="login-brand">
-        <span>LCT Collect</span>
-        <p>Lusaze Community Traders SACCO</p>
-      </header>
-      <main className="login-shell">
-        <span className="eyebrow">Field collections, clearly recorded</span>
-        <h1>Welcome back</h1>
-        <p>Sign in with your assigned username.</p>
-        {(error || notice || cacheWarning) && (
-          <div className="alert error" role="alert">
-            {error || notice || cacheWarning}
-          </div>
-        )}
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setError('');
-            setBusy(true);
-            const data = new FormData(e.currentTarget);
-            try {
-              const email = usernameEmail(data.get('username') as string);
-              localStorage.setItem(
-                'lct-trusted-device',
-                data.get('trusted') ? 'yes' : 'no',
-              );
-              await signInWithEmailAndPassword(
-                auth,
-                email,
-                data.get('password') as string,
-              );
-            } catch (err) {
-              setError(message(err));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <label>
-            Username
-            <input
-              name="username"
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              required
-              placeholder="Your username"
-            />
-          </label>
-          <label>
-            Password
-            <div className="password-input">
-              <input
-                name="password"
-                type={show ? 'text' : 'password'}
-                autoComplete="current-password"
-                required
-                placeholder="Your password"
-              />
-              <button
-                type="button"
-                className="icon-button"
-                aria-label={show ? 'Hide password' : 'Show password'}
-                onClick={() => setShow((v) => !v)}
-              >
-                <Icon name="eye" />
-              </button>
-            </div>
-          </label>
-          <label className="checkbox-label">
-            <input name="trusted" type="checkbox" />
-            <span>
-              Save records for offline viewing on this trusted, non-shared
-              device.
-            </span>
-          </label>
-          <p className="small-note">
-            Saved records can remain accessible on a disconnected device. Only
-            enable this on a device you trust.
-          </p>
-          <button className="button full" disabled={busy}>
-            {busy ? 'Signing in…' : 'Sign in'}
-            <Icon name="arrow-right" />
-          </button>
-        </form>
-        <p className="login-help">
-          Need an account or a password reset? Contact the SACCO owner.
-        </p>
-        {import.meta.env.PUBLIC_APP_ENV !== 'production' && (
-          <span className="environment">Staging environment</span>
-        )}
-      </main>
-    </div>
   );
 }

@@ -1,11 +1,13 @@
 # Design verification
 
-Visual target: the user-supplied revised option 3 image (navy header with History/Recent entries, green cash amount, separate Find member and New entry panels, Cancel/Confirm).
+Target: the user's revised option 3. Preserve the navy header, green expected cash, separate Find member/New entry panels, and explicit account name/number/ID. Refinement uses Impeccable Operate/adapt/harden guidance and the maintained DESIGN.md/UX-CONTRACT.md.
 
-Implemented the corresponding responsive layout and carried its typography, navy/green palette, account identity and form hierarchy into login, history, recent entries, viewer and owner pages. No supplied SACCO data or screenshot is bundled into the public app.
+Browser verification was performed on 24 October 2026 using Chromium against a compiled static app with local Firebase emulators and 820 synthetic accounts. No real SACCO data was used. Viewports included 320×760, 390×844 and 1280×900. Screenshots were saved and inspected in `/workspace/lct-ui-evidence/` for collection, long identifiers, review, history and the viewer register. The original layout was captured before refinement for comparison.
 
-final result: blocked
+Verified behavior: amount validation does not unmount the form; account changes and navigation protect the draft; full-width mobile amounts fit the maximum input; saved receipts contain account/amount; actual save and void update the log; viewer recording and audited undo work; imports reserve numbers, display changes and stop stale previews; blocked storage falls back to memory sign-in and blocks financial submission; offline and workday rollover block writes; pending references recover the saved entry. Nine project-owned browser scenarios cover these flows. CI retains failure traces and captures for seven days.
 
-The required interactive local browser is unavailable in this workspace. No rendered screenshot comparison or visual interaction test was performed. Compilation, domain tests and emulator tests are separate evidence and do not establish visual fidelity or Android usability. User authorized continuing directly with the real project despite this verification limitation.
+Static checks: Astro diagnostics, domain/import and generated-worker tests, Firestore rules tests, the Auth/query smoke checks, and the production static build. The strict premium contract audit reports zero violations. DESIGN.md lint reports zero errors; unused documentation token warnings are advisory. The generated service worker handles known static GETs only and caches owner code when first requested.
 
-Remaining gate: compare the same selected-account/amount state at matching viewport width, then verify 320px overflow, mobile keyboard, dialogs, navigation, viewer rows, search keyboard access and CSV preview on a real browser. Complete PILOT.md before field use.
+Remaining acceptance: a physical small Android phone, its actual numeric keyboard and browser chrome, text zoom and assistive-technology testing, staging user/profile verification, first trusted-branch federated deployment, and the paper-parallel pilot. These are not established by desktop browser emulation. Production Hosting has not been deployed by this refinement.
+
+After a release, close existing LCT Collect tabs and reopen to activate an installed app-shell update if an older version remains visible. Do not clear site data while an uncertain save still needs checking.

@@ -141,7 +141,8 @@ export async function saveEntry(
 }
 export async function findSubmission(id: string) {
   online();
-  return (await getDocFromServer(doc(db(), 'entries', id))).exists();
+  const snap = await getDocFromServer(doc(db(), 'entries', id));
+  return snap.exists() ? (snap.data() as Entry) : null;
 }
 export async function voidEntryLine(
   entry: Entry,
@@ -196,6 +197,7 @@ export async function setRecorded(
   type: LineType,
   recorded: boolean,
   uid: string,
+  actorName: string,
 ) {
   online();
   const ref = doc(db(), 'entries', entryId);
@@ -218,6 +220,7 @@ export async function setRecorded(
       [`lines.${type}.recordingRevision`]: revision,
       [`lines.${type}.recordingHistory.${revision}`]: {
         by: uid,
+        actorName,
         at: serverTimestamp(),
         recorded,
       },

@@ -24,8 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: develop
+          ref: ${{ github.event_name == 'push' && github.sha || 'develop' }}
           persist-credentials: false
+      - name: Record deployed source
+        run: git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -51,6 +53,6 @@ jobs:
           workload_identity_provider: projects/679421917255/locations/global/workloadIdentityPools/lct-github-staging/providers/github
           service_account: lct-github-staging@lct-collect-staging.iam.gserviceaccount.com
       - name: Deploy Firestore rules and indexes
-        run: npx -y firebase-tools@latest deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+        run: npx -y firebase-tools@15.34.1 deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
       - name: Deploy staging preview and renew expiry
-        run: npx -y firebase-tools@latest hosting:channel:deploy staging --project "$FIREBASE_PROJECT_ID" --expires 30d --no-authorized-domains --non-interactive
+        run: npx -y firebase-tools@15.34.1 hosting:channel:deploy staging --project "$FIREBASE_PROJECT_ID" --expires 30d --no-authorized-domains --non-interactive

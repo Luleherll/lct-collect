@@ -12,3 +12,8 @@ coverage/
 *.xlsx
 
 gh-creds-*.json
+
+playwright-report/
+test-results/
+
+.test-dist/

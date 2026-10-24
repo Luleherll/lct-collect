@@ -38,6 +38,7 @@ export const LABELS: Record<LineType, string> = {
   loanInstalment: 'Loan instalment',
 };
 export interface RecordingEvent {
+  actorName?: string;
   by: string;
   at: Timestamp;
   recorded: boolean;

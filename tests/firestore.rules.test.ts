@@ -192,6 +192,10 @@ beforeEach(async () => {
         createdAt: Timestamp.now(),
       });
     await setDoc(doc(db, 'members', '137'), member);
+    await setDoc(doc(db, 'accountNumbers', member.accountNumber), {
+      memberId: member.memberId,
+      updatedAt: Timestamp.now(),
+    });
     await setDoc(doc(db, 'sessions', sessionId), baseSession());
   });
 });
@@ -493,17 +497,21 @@ describe('roles and immutable audit history', () => {
     );
     await assertFails(getDoc(doc(admin, 'sessions', sessionId)));
   });
-  it('supports a full 50-account import chunk within rule call limits', async () => {
+  it('supports a reserved five-account import chunk within rule call limits', async () => {
     const db = env
       .authenticatedContext('admin-a')
       .firestore() as unknown as Firestore;
     await assertSucceeds(
       runTransaction(db, async (tx) => {
-        const refs = Array.from({ length: 50 }, (_, i) =>
+        const refs = Array.from({ length: 5 }, (_, i) =>
           doc(db, 'members', String(1000 + i)),
         );
         await Promise.all(refs.map((ref) => tx.get(ref)));
-        refs.forEach((ref, i) =>
+        refs.forEach((ref, i) => {
+          tx.set(doc(db, 'accountNumbers', String(900000 + i)), {
+            memberId: String(1000 + i),
+            updatedAt: serverTimestamp(),
+          });
           tx.set(ref, {
             memberId: String(1000 + i),
             accountNumber: String(900000 + i),
@@ -511,9 +519,39 @@ describe('roles and immutable audit history', () => {
             searchName: `example ${i}`,
             active: true,
             updatedAt: serverTimestamp(),
-          }),
-        );
+          });
+        });
       }),
+    );
+  });
+  it('rejects unreserved member numbers and reservation reassignment', async () => {
+    const db = env
+      .authenticatedContext('admin-a')
+      .firestore() as unknown as Firestore;
+    await assertFails(
+      updateDoc(doc(db, 'members', '137'), {
+        accountNumber: '999',
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'accountNumbers', member.accountNumber), {
+        memberId: '999',
+      }),
+    );
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'members', '999'), {
+      ...member,
+      memberId: '999',
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'accountNumbers', member.accountNumber), {
+      memberId: '999',
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(batch.commit());
+    await assertFails(
+      getDoc(doc(agent(), 'accountNumbers', member.accountNumber)),
     );
   });
   it('revokes existing agent access when its profile becomes inactive', async () => {

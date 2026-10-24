@@ -90,3 +90,9 @@ Direct-load/refresh `/login/`, `/agent/`, `/agent/recent/`, `/agent/history/`, `
 No Analytics, Cloud Functions or Storage service is initialized. Real member exports must not be loaded into staging.
 
 References: [Google GitHub authentication action](https://github.com/google-github-actions/auth), [Firestore locations](https://firebase.google.com/docs/firestore/locations).
+
+## Release integrity and directory reservations
+
+Push deployments check out the triggering commit SHA. Scheduled/manual staging renewals intentionally check out `develop` once and record the resolved commit in the job summary. Production manual runs use their selected event SHA. Firebase CLI is pinned to 15.34.1 for reproducible deployments. The PR CI browser job exercises real application operations against emulators and retains test traces/screenshots for seven days.
+
+Rules now require a matching immutable `accountNumbers/{number}` reservation for member writes. Before enabling production imports against an older directory, upload its current reviewed CSV and use Apply updates: the app explicitly prepares missing reservations for the current directory before changing any accounts. This one-time phase may take a minute for 820 accounts and displays confirmed progress. Duplicate legacy numbers or conflicts stop the import for owner review; never reassign reservation ownership to bypass an error. Empty projects need no backfill. Privileged console/Admin SDK changes must preserve this mapping too. No real production data was modified as part of the UI refinement.

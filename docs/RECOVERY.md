@@ -6,7 +6,7 @@ Frontend rollback: use Firebase Hosting release history or deploy the previous r
 
 For a suspected duplicate/uncertain save, find the exact entry ID and its account/amounts before retrying. The app persists only the pending submission ID, not an offline financial queue. Retry the same attempted entry with that ID; do not manufacture a new ID to get past an error.
 
-For a partial member import, re-upload the same CSV, inspect the preview, and apply remaining changes. No absent accounts are deleted. Names in old entries are snapshots. Correct a wrong directory name through another reviewed import. Do not rewrite historic snapshots.
+For a partial member import, re-upload the same CSV, inspect the preview, and apply remaining changes. The progress count lists confirmed changes; a timed-out chunk may still have completed. Existing account-number reservations are immutable, and stale previews stop on a conflict. No absent accounts are deleted. Names in old entries are snapshots. Correct a wrong directory name through another reviewed import. Do not rewrite historic snapshots.
 
 For late errors or a recorded line that cannot be voided, follow the SACCO's office escalation process and correct Ssentezo separately as required. An office undo unchecks only this app's checklist. It does not undo the Ssentezo financial transaction.
 

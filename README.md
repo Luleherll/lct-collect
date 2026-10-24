@@ -53,6 +53,8 @@ Open the URL Astro prints. Local-only accounts: `demo.agent`, `demo.viewer`, `de
 npm run check
 npm run test
 npm run test:rules
+npx playwright install chromium
+npm run test:e2e
 npm run build
 ```
 
@@ -64,7 +66,7 @@ Follow [account setup](docs/ACCOUNT_SETUP.md). Creating an Authentication user a
 
 Import the **CSV** export supplied by Ssentezo. Native `.xlsx` files are not accepted in this version; export them to CSV first. IDs and account numbers stay strings, including leading zeros. The preview rejects missing fields, duplicate IDs, scientific-notation identifiers and account-number collisions. Apply updates is explicit and online. Existing accounts absent from an upload remain. Previously inactive accounts remain inactive. Names and numbers in existing transactions never change.
 
-Imports run in chunks of 50 online transactions. A file is not one 820-row atomic operation. If connectivity fails partway through, some chunks may have committed; re-upload the same file and review remaining additions/updates. Only changed rows are written.
+Imports reserve account numbers and run in five-account online transaction chunks. Existing reservations are reused; the first import prepares reservations for older directory records. Account numbers remain assigned to their original account ID and cannot be moved between IDs in a bulk upload. A changed record invalidates its preview instead of being overwritten. A file is not one 820-row atomic operation. If connectivity fails partway through, some chunks may have committed; re-upload the same file and review remaining additions/updates. Only changed rows are written.
 
 ## Important protocol details
 
@@ -72,7 +74,7 @@ Imports run in chunks of 50 online transactions. A file is not one 820-row atomi
 - Viewer changes preserve `financialRevision`, amounts, identity and session totals. Audit events use a bounded revision-keyed map so each event can receive a server timestamp and older events cannot be rewritten.
 - Recording history allows 40 transitions per line. Further changes stop with an owner escalation message. Migrate audit storage before changing that limit; never truncate old events.
 - Opening cash and each line currently have a UGX **100,000,000** cap, with separately bounded aggregates. Confirm this operating limit before a live pilot; change both client constants and rules together.
-- Failed/uncertain saves retain the submission ID, including across refreshes. No financial form payload is saved as an offline queue. Reconnect and check the same ID before retrying. A restored ID does not restore its form inputs.
+- Failed/uncertain saves retain the submission ID, including across refreshes. Site storage must be available before a financial save is sent. Read-only sign-in can fall back to memory; sign-in normally lasts for the browser session. Draft account changes and navigation require an explicit discard decision. No financial form payload is saved as an offline queue. Reconnect and check the same ID before retrying. A restored ID does not restore its form inputs.
 - Security rules validate the data and atomic relationships; they cannot establish which SDK method a modified client used. The official app exclusively uses `runTransaction()` for writes.
 - Cash is a field estimate, not a member savings balance or withdrawal entitlement. Corrections discovered after expiry/recording require SACCO office escalation; there is no historical edit workflow.
 
@@ -81,3 +83,5 @@ Imports run in chunks of 50 online transactions. A file is not one 820-row atomi
 See [deployment](docs/DEPLOYMENT.md), [recovery](docs/RECOVERY.md), [pilot checklist](docs/PILOT.md), and [design verification](design-qa.md). The supplied screenshot is the main-screen target; navy/green styling carries through all routes.
 
 Do not treat a successful build or emulator run as field acceptance. Browser visual QA, real small-Android checks, staging account verification, and the notebook-parallel pilot are release gates. No Firebase deployment credentials, real member exports or production records belong in this repository.
+
+The mobile refinement and review fixes are tracked in [review resolution](docs/REVIEW_RESOLUTION.md). Visual and interaction contracts are maintained in [DESIGN.md](DESIGN.md) and [UX-CONTRACT.md](UX-CONTRACT.md). Browser tests use 820 synthetic accounts against local emulators only.
