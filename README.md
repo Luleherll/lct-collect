@@ -12,6 +12,12 @@ Mobile-first field collection log for Lusaze Community Traders SACCO. Astro stat
 - Trusted-device read cache and a static-only service worker; all application writes use online transactions.
 - Emulator security tests and isolated staging/production workflow definitions.
 
+## Staging preview
+
+https://lct-collect-staging--staging-5osd9ys7.web.app
+
+Staging uses Standard Firestore in Johannesburg. See [deployment setup](docs/DEPLOYMENT.md) for keyless GitHub auto-deploy activation and [account setup](docs/ACCOUNT_SETUP.md) for manually provisioning application access.
+
 ## Local development
 
 Node 22+ and Java 21 are required. Java is used only by the Firestore emulator.

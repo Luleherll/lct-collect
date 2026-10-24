@@ -10,7 +10,7 @@ service cloud.firestore {
     function currentStart() { return (request.time + duration.value(1, 'h')).date() - duration.value(1, 'h'); }
     function current(s) { return s.startsAt <= request.time && request.time < s.endsAt; }
     function lineAmount(e, kind) {
-      return e != null && kind in e.lines && e.lines[kind].state == 'active' ? e.lines[kind].amount : 0;
+      return kind in e.lines && e.lines[kind].state == 'active' ? e.lines[kind].amount : 0;
     }
     function sessionValid(s, id) {
       return s.keys().hasAll(['sessionId','agentId','workday','startsAt','endsAt','openingCash','totalDeposits','totalWithdrawals','totalLoanInstalments','expectedCash','revision','lastMutationId','createdAt'])
@@ -62,14 +62,15 @@ service cloud.firestore {
     }
     function sessionChange(before,after) {
       let path = /databases/$(database)/documents/entries/$(after.lastMutationId);
-      let oldEntry = exists(path) ? get(path).data : null;
+      let hadEntry = exists(path);
+      let oldEntry = hadEntry ? get(path).data : {'lines': {}, 'financialRevision': 0};
       let newEntry = getAfter(path).data;
       return after.diff(before).affectedKeys().hasOnly(['totalDeposits','totalWithdrawals','totalLoanInstalments','expectedCash','revision','lastMutationId'])
         && current(before) && after.revision == before.revision + 1
         && newEntry.entryId == after.lastMutationId && newEntry.sessionId == before.sessionId
         && newEntry.agentId == before.agentId && newEntry.workday == before.workday
         && newEntry.financialRevision == after.revision
-        && (oldEntry == null || oldEntry.financialRevision != newEntry.financialRevision)
+        && (!hadEntry || oldEntry.financialRevision != newEntry.financialRevision)
         && after.totalDeposits == before.totalDeposits + lineAmount(newEntry,'deposit') - lineAmount(oldEntry,'deposit')
         && after.totalWithdrawals == before.totalWithdrawals + lineAmount(newEntry,'withdrawal') - lineAmount(oldEntry,'withdrawal')
         && after.totalLoanInstalments == before.totalLoanInstalments + lineAmount(newEntry,'loanInstalment') - lineAmount(oldEntry,'loanInstalment');

@@ -10,3 +10,5 @@ dist/
 coverage/
 *.csv
 *.xlsx
+
+gh-creds-*.json

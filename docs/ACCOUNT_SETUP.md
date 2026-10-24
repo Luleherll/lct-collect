@@ -4,7 +4,7 @@ Do this independently in staging and production. Use fictional accounts/data in 
 
 1. Enable Authentication → Email/Password in the intended Firebase project.
 2. Choose a unique username of 3–32 lowercase letters, digits, `.`, `_`, `-`; the first character must be a letter or digit.
-3. Create its Auth user with email `<username>@users.lct-collect.invalid` and a securely delivered password. These are reserved internal identifiers, not contact addresses. Do not use email-reset links for these synthetic identities. Reset passwords through Firebase Console when needed.
+3. Create its Auth user with email `<username>@users.lct-collect.invalid` and a securely delivered password. These are reserved internal identifiers, not contact addresses. Do not use email-reset links for these synthetic identities. For these internal identities, reset passwords with the Firebase Admin SDK from a trusted administrative environment; Console email-reset messages cannot reach `.invalid` addresses.
 4. Copy the Auth UID. In Firestore create `users/{UID}` with:
 
 | Field       | Type      | Example                       |
