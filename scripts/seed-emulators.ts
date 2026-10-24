@@ -43,9 +43,11 @@ for (let i = 1; i <= count; i++)
   await db.doc(`members/${String(i).padStart(3, '0')}`).set({
     memberId: String(i).padStart(3, '0'),
     accountNumber:
-      i === 7
-        ? '0000000000000000000000000000000000000007'
-        : `000401001${String(i).padStart(3, '0')}`,
+      i === 6
+        ? '000401001006'
+        : i === 7
+          ? 'LCT0000000000000000000000000000000000007'
+          : `LCT${String(i).padStart(3, '0')}`,
     fullName:
       i === 7
         ? 'Example Member with a deliberately long synthetic name for narrow screen testing'
@@ -96,7 +98,7 @@ if (!(await ref.get()).exists) {
     agentNameSnapshot: 'Demo agent',
     workday: day,
     memberId: '001',
-    accountNumberSnapshot: '000401001001',
+    accountNumberSnapshot: 'LCT001',
     memberNameSnapshot: 'Example Member 1',
     createdAt: at,
     financialRevision: 1,

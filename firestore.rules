@@ -1,3 +1,8 @@
+// Directory: members/{memberId} stores name, LCT accountNumber, searchName,
+// active and server updatedAt. New LCT identities equal their account number;
+// numeric identities/numbers remain valid for existing records and reservations.
+// accountNumbers/{number} permanently binds a number to one member identity.
+// Existing role access and immutable financial entry snapshots stay unchanged.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -120,27 +125,38 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
+    function directoryId(id) {
+      return id is string && (id.matches('^[0-9]{1,32}$') || id.matches('^LCT[0-9]{1,37}$'));
+    }
+    function accountNumber(number) {
+      return number is string && (number.matches('^[0-9]{1,40}$') || number.matches('^LCT[0-9]{1,37}$'));
+    }
+    function validMember(m, id) {
+      return m.keys().hasAll(['memberId','accountNumber','fullName','searchName','active','updatedAt'])
+        && m.keys().hasOnly(['memberId','accountNumber','fullName','searchName','active','updatedAt'])
+        && m.memberId == id && directoryId(id) && accountNumber(m.accountNumber)
+        && (!id.matches('^LCT.*') || m.accountNumber == id)
+        && m.fullName is string && m.fullName.size() > 0 && m.fullName.size() <= 120
+        && m.searchName == m.fullName.lower()
+        && m.active is bool && m.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/accountNumbers/$(m.accountNumber)).data.memberId == id;
+    }
+    function validReservation(r, number) {
+      return accountNumber(number)
+        && r.keys().hasAll(['memberId','updatedAt']) && r.keys().hasOnly(['memberId','updatedAt'])
+        && directoryId(r.memberId) && r.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/members/$(r.memberId)).data.accountNumber == number;
+    }
     match /members/{id} {
       allow read: if active() && (role('admin') || resource.data.active == true);
-      allow create, update: if role('admin')
-        && request.resource.data.keys().hasAll(['memberId','accountNumber','fullName','searchName','active','updatedAt'])
-        && request.resource.data.keys().hasOnly(['memberId','accountNumber','fullName','searchName','active','updatedAt'])
-        && request.resource.data.memberId == id && id.matches('^[0-9]{1,32}$')
-        && request.resource.data.accountNumber is string && request.resource.data.accountNumber.matches('^[0-9]{1,40}$')
-        && request.resource.data.fullName is string && request.resource.data.fullName.size() > 0 && request.resource.data.fullName.size() <= 120
-        && request.resource.data.searchName == request.resource.data.fullName.lower()
-        && request.resource.data.active is bool && request.resource.data.updatedAt == request.time
-        && getAfter(/databases/$(database)/documents/accountNumbers/$(request.resource.data.accountNumber)).data.memberId == id;
+      allow create: if role('admin') && id.matches('^LCT[0-9]{1,37}$') && validMember(request.resource.data, id);
+      allow update: if role('admin') && validMember(request.resource.data, id)
+        && (!resource.data.accountNumber.matches('^LCT.*') || request.resource.data.accountNumber == resource.data.accountNumber);
       allow delete: if false;
     }
     match /accountNumbers/{number} {
       allow read: if role('admin');
-      allow create: if role('admin') && number.matches('^[0-9]{1,40}$')
-        && request.resource.data.keys().hasAll(['memberId','updatedAt'])
-        && request.resource.data.keys().hasOnly(['memberId','updatedAt'])
-        && request.resource.data.memberId is string && request.resource.data.memberId.matches('^[0-9]{1,32}$')
-        && request.resource.data.updatedAt == request.time
-        && getAfter(/databases/$(database)/documents/members/$(request.resource.data.memberId)).data.accountNumber == number;
+      allow create: if role('admin') && validReservation(request.resource.data, number);
       allow update, delete: if false;
     }
     match /sessions/{id} {

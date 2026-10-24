@@ -48,7 +48,7 @@ export default function MemberAdmin({
     }
   }
   const matches = members.filter((m) =>
-    `${m.fullName} ${m.memberId} ${m.accountNumber}`
+    `${m.fullName} ${m.accountNumber}`
       .toLowerCase()
       .includes(q.toLowerCase().trim()),
   );
@@ -94,6 +94,19 @@ export default function MemberAdmin({
       {plan && (
         <section className="card">
           <h2>Review import</h2>
+          <p className="muted">
+            {name} · Uses Account Name and Unique Number as the LCT account
+            number.
+          </p>
+          {plan.rows.some(
+            (r) => r.previous && !r.previous.accountNumber.startsWith('LCT'),
+          ) && (
+            <p className="alert">
+              Existing accounts will be linked to their LCT numbers. Saved
+              entries keep their original details; no accounts are deleted.
+            </p>
+          )}
+
           <div className="import-counts">
             {(['Add', 'Update', 'Unchanged'] as const).map((a) => (
               <span key={a}>
@@ -125,7 +138,6 @@ export default function MemberAdmin({
               <caption className="sr-only">Preview of account changes</caption>
               <thead>
                 <tr>
-                  <th>Account ID</th>
                   <th>Account number</th>
                   <th>Name</th>
                   <th>Change</th>
@@ -134,17 +146,7 @@ export default function MemberAdmin({
               <tbody>
                 {plan.rows.slice(0, 30).map((r) => (
                   <tr key={r.memberId}>
-                    <td>{r.memberId}</td>
-                    <td>
-                      {r.previous &&
-                        r.previous.accountNumber !== r.accountNumber && (
-                          <del>
-                            {r.previous.accountNumber}
-                            <br />
-                          </del>
-                        )}
-                      {r.accountNumber}
-                    </td>
+                    <td>{r.accountNumber}</td>
                     <td>
                       {r.previous && r.previous.fullName !== r.fullName && (
                         <del>
@@ -216,11 +218,7 @@ export default function MemberAdmin({
         <div className="directory-list">
           {matches.slice((currentPage - 1) * 50, currentPage * 50).map((m) => (
             <div key={m.memberId}>
-              <Account
-                name={m.fullName}
-                number={m.accountNumber}
-                id={m.memberId}
-              />
+              <Account name={m.fullName} number={m.accountNumber} />
               {!m.active && <span className="status">Inactive</span>}
             </div>
           ))}
@@ -249,7 +247,7 @@ export default function MemberAdmin({
         </nav>
         {!matches.length && (
           <p className="muted">
-            No matching accounts. Try a different name, account ID or number.
+            No matching accounts. Try a different name or LCT account number.
           </p>
         )}
       </section>

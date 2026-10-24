@@ -61,4 +61,4 @@ Flat bordered panels. Dimmed native dialog backdrop; no ornamental shadows.
 
 ## Do's and Don'ts
 
-Keep account ID and number as strings; allow long identifiers to wrap. Confirm discarding drafts/account switches. Do not persist financial drafts or enqueue financial writes. Keep the chosen navy/green identity across collection, history, office register, owner imports and sign-in. Native select/date popups remain OS-owned; do not fake a custom dropdown. Visual verification uses synthetic emulator accounts only.
+Display only member name and the LCT account number (for example LCT002); preserve leading zeros and allow wrapping. Internal legacy document keys stay hidden to preserve financial references. Confirm discarding drafts/account switches. Do not persist financial drafts or enqueue financial writes. Keep the chosen navy/green identity across collection, history, office register, owner imports and sign-in. Native select/date popups remain OS-owned; do not fake a custom dropdown. Visual verification uses synthetic emulator accounts only.

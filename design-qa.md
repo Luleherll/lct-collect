@@ -1,6 +1,6 @@
 # Design verification
 
-Target: the user's revised option 3. Preserve the navy header, green expected cash, separate Find member/New entry panels, and explicit account name/number/ID. Refinement uses Design Partner compact operator layouts alongside the earlier Impeccable Operate/adapt/harden guidance and the maintained DESIGN.md/UX-CONTRACT.md.
+Target: the user's revised option 3. Preserve the navy header, green expected cash, separate Find member/New entry panels, and explicit member name and LCT account number. Refinement uses Design Partner compact operator layouts alongside the earlier Impeccable Operate/adapt/harden guidance and the maintained DESIGN.md/UX-CONTRACT.md.
 
 Browser verification was performed on 24 October 2026 using Chromium against a compiled static app with local Firebase emulators and 820 synthetic accounts. No real SACCO data was used. Viewports included 320×760, 390×740, 390×844 and 1280×900. Screenshots were saved and inspected in `/workspace/lct-ui-evidence/` for collection, long identifiers, review, history and the viewer register. The original layout was captured before refinement for comparison.
 
@@ -11,3 +11,5 @@ Static checks: Astro diagnostics, domain/import and generated-worker tests, Fire
 Remaining acceptance: a physical small Android phone, its actual numeric keyboard and browser chrome, text zoom and assistive-technology testing, staging user/profile verification, first trusted-branch federated deployment, and the paper-parallel pilot. These are not established by desktop browser emulation. Production Hosting has not been deployed by this refinement.
 
 After a release, close existing LCT Collect tabs and reopen to activate an installed app-shell update if an older version remains visible. Do not clear site data while an uncertain save still needs checking.
+
+LCT identity update (25 October, Kampala): screens and import preview show name and one LCT account number, with old IDs removed from search and display. CSV matching uses Unique Number and Account Name. The approved legacy bridge preserves existing document identities; rules and unit scenarios cover linking, duplicate LCT numbers, malformed numbers, old-column ignoring and original financial snapshot preservation. Visual regression uses synthetic LCT accounts, including a maximum-length number and one legacy account for the linking test.

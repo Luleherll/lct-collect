@@ -13,7 +13,9 @@ async function select(page: Page, id = '003') {
   await page.getByLabel('Search members', { exact: true }).fill(id);
   await page
     .locator('.suggestions button')
-    .filter({ hasText: `Account ID ${id}` })
+    .filter({
+      hasText: id === '007' ? 'deliberately long' : `Account no. LCT${id}`,
+    })
     .click();
 }
 async function noOverflow(page: Page) {
@@ -50,7 +52,7 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await page.getByLabel('Search members', { exact: true }).fill('004');
   await page
     .locator('.suggestions button')
-    .filter({ hasText: 'Account ID 004' })
+    .filter({ hasText: 'LCT004' })
     .click();
   await expect(page.getByRole('dialog')).toContainText('Change member');
   await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
@@ -98,13 +100,11 @@ test('member change discards amounts only after confirmation and long inputs ref
   await page.getByLabel('Search members', { exact: true }).fill('004');
   await page
     .locator('.suggestions button')
-    .filter({ hasText: 'Account ID 004' })
+    .filter({ hasText: 'LCT004' })
     .click();
   await page.getByRole('button', { name: 'Discard & change member' }).click();
   await expect(page.locator('#deposit')).toHaveValue('');
-  await expect(page.locator('.entry-card .account')).toContainText(
-    'Account ID 004',
-  );
+  await expect(page.locator('.entry-card .account')).toContainText('LCT004');
   await page.locator('#deposit').fill('20,000');
   await page.locator('#loanInstalment').fill('5,000');
   await page.locator('#withdrawal').focus();
@@ -143,7 +143,7 @@ test('viewer records and undoes through the real audited operations', async ({
   });
 });
 
-test('owner previews old and new values, applies a reserved directory transaction and rejects cross-ID reuse', async ({
+test('owner imports LCT numbers, preserves existing identities and ignores old export columns', async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -152,7 +152,7 @@ test('owner previews old and new values, applies a reserved directory transactio
     name: 'update.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
-      'Account Id,Account Number,Account Name\n006,000401001006,Updated Example Six\n9001,009001,New Example Account\n',
+      'Account Id,Account Number,Unique Number,Account Name\n006,ignored,LCT006,Updated Example Six\n9001,ignored,LCT9001,New Example Account\n',
     ),
   });
   await expect(
@@ -171,13 +171,20 @@ test('owner previews old and new values, applies a reserved directory transactio
     name: 'collision.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
-      'Account Id,Account Number,Account Name\n9002,009001,Conflict\n',
+      'Account Id,Account Number,Unique Number,Account Name\n9002,ignored,LCT9001,Reviewed name change\n',
     ),
   });
   await expect(
     page.getByRole('button', { name: 'Apply updates' }),
-  ).toBeDisabled();
-  await expect(page.getByRole('alert')).toContainText('already assigned');
+  ).toBeEnabled();
+  await expect(
+    page.getByRole('heading', { name: 'Review import' }),
+  ).toBeVisible();
+  await expect(page.locator('tbody')).toContainText('LCT9001');
+  await expect(page.locator('tbody')).toContainText('Update');
+  await expect(
+    page.getByRole('columnheader', { name: 'Account ID' }),
+  ).toHaveCount(0);
 });
 
 test('blocked Web Storage permits memory-only sign-in and safely blocks financial submission', async ({
@@ -267,9 +274,7 @@ test('a changed member invalidates an older import preview', async ({
   const csv = (name: string) => ({
     name: 'change.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(
-      `Account Id,Account Number,Account Name\n006,000401001006,${name}\n`,
-    ),
+    buffer: Buffer.from(`Unique Number,Account Name\nLCT006,${name}\n`),
   });
   await page
     .locator('input[type=file]')

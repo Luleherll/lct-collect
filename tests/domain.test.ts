@@ -63,8 +63,8 @@ describe('member identity', () => {
       active: false,
     },
   ];
-  it('keeps accounts separate, supports partial names and exact string IDs', () => {
-    expect(searchMembers(members, '0137')[0].memberId).toBe('0137');
+  it('keeps accounts separate, supports partial names and exact account-number strings', () => {
+    expect(searchMembers(members, '001337')[0].memberId).toBe('0137');
     expect(searchMembers(members, 'Example')).toHaveLength(2);
     expect(searchMembers(members, '002002')[0].memberId).toBe('2');
     expect(searchMembers(members, 'inactive')).toHaveLength(0);
@@ -79,47 +79,124 @@ describe('member identity', () => {
 describe('Ssentezo directory import', () => {
   const header =
     'Account Id,Account Number,Unique Number,Account Name,Amount\r\n';
-  it('extracts only account ID, number and name while retaining zeros', () => {
+  it('imports name and LCT unique number only, preserving zeros and ignoring old columns', () => {
     const p = planImport(
-      '\uFEFF' + header + '0137,0000137,IGNORED,"Example, Person",999\r\n',
+      '\uFEFF' + header + '0137,0000137,LCT002,"Example, Person",999\r\n',
       [],
     );
     expect(p.errors).toEqual([]);
     expect(p.rows).toEqual([
       {
-        memberId: '0137',
-        accountNumber: '0000137',
+        memberId: 'LCT002',
+        accountNumber: 'LCT002',
         fullName: 'Example, Person',
         action: 'Add',
       },
     ]);
+    expect(planImport('Unique Number,Account Name\nLCT002,A', []).rows).toEqual(
+      [
+        {
+          memberId: 'LCT002',
+          accountNumber: 'LCT002',
+          fullName: 'A',
+          action: 'Add',
+        },
+      ],
+    );
   });
-  it('updates by account ID and preserves absent accounts', () => {
+  it('matches existing accounts by LCT number and ignores misleading legacy columns', () => {
     const existing = [
-      { memberId: '1', accountNumber: '001', fullName: 'Old name' },
-      { memberId: '2', accountNumber: '002', fullName: 'Other' },
+      { memberId: 'old-key', accountNumber: 'LCT002', fullName: 'Old' },
+      { memberId: 'other', accountNumber: 'LCT003', fullName: 'Other' },
     ] as Member[];
-    const p = planImport(header + '1,001,X,New name,\n', existing);
-    expect(p.rows).toHaveLength(1);
-    expect(p.rows[0].action).toBe('Update');
+    const p = planImport(header + 'other,ignored,LCT002,Updated,', existing);
+    expect(p.errors).toEqual([]);
+    expect(p.rows[0]).toMatchObject({
+      memberId: 'old-key',
+      accountNumber: 'LCT002',
+      action: 'Update',
+    });
     expect(existing).toHaveLength(2);
   });
-  it('rejects duplicate IDs and account-number collisions', () => {
-    expect(
-      planImport(header + '1,001,X,A,\n1,002,Y,B,', []).errors.length,
-    ).toBeGreaterThan(0);
-    expect(
-      planImport(header + '1,001,X,A,\n2,001,Y,B,', []).errors.length,
-    ).toBeGreaterThan(0);
+  it('links a legacy record once, preserving identity and permitting name changes', () => {
+    const existing = [
+      { memberId: '0137', accountNumber: '0000137', fullName: 'Old' },
+    ] as Member[];
+    const p = planImport(header + '0137,IGNORED,LCT002,New name,', existing);
+    expect(p.errors).toEqual([]);
+    expect(p.rows[0]).toMatchObject({
+      memberId: '0137',
+      accountNumber: 'LCT002',
+      fullName: 'New name',
+      action: 'Update',
+    });
+    expect(p.rows[0].previous?.accountNumber).toBe('0000137');
   });
-  it('permits different accounts with the same name', () =>
+  it('does not guess legacy links by name or map two LCT numbers to one legacy record', () => {
+    const existing = [
+      { memberId: '137', accountNumber: '137', fullName: 'Same name' },
+    ] as Member[];
     expect(
-      planImport(header + '1,001,X,Same name,\n2,002,Y,Same name,', []).errors,
-    ).toEqual([]));
+      planImport('Unique Number,Account Name\nLCT002,Same name', existing)
+        .errors,
+    ).not.toEqual([]);
+    expect(
+      planImport(header + '137,x,LCT002,A,\n137,y,LCT003,B,', existing).errors,
+    ).not.toEqual([]);
+  });
+  it('rejects conflicting relinks while a legacy transition is only partially complete', () => {
+    const existing = [
+      { memberId: '1', accountNumber: 'LCT002', fullName: 'A' },
+      { memberId: '2', accountNumber: '002', fullName: 'B' },
+    ] as Member[];
+    expect(
+      planImport(header + '1,ignored,LCT003,A,', existing).errors,
+    ).not.toEqual([]);
+    const resumed = planImport(
+      header + '1,ignored,LCT002,A,\n2,ignored,LCT003,B,',
+      existing,
+    );
+    expect(resumed.errors).toEqual([]);
+    expect(resumed.rows.map((r) => r.action)).toEqual(['Unchanged', 'Update']);
+    expect(resumed.rows.map((r) => r.memberId)).toEqual(['1', '2']);
+  });
+  it('rejects duplicate unique numbers and malformed identifiers', () => {
+    expect(
+      planImport(header + '1,1,LCT002,A,\n2,2,LCT002,B,', []).errors,
+    ).not.toEqual([]);
+    for (const number of [
+      '002',
+      'lct002',
+      'LCT',
+      'LCT/002',
+      'LCT2.0',
+      'LCT' + '0'.repeat(38),
+    ])
+      expect(
+        planImport(`Unique Number,Account Name\n${number},A`, []).errors,
+      ).not.toEqual([]);
+  });
+  it('permits distinct LCT accounts with the same name', () => {
+    expect(
+      planImport(
+        'Unique Number,Account Name\nLCT002,Same name\nLCT003,Same name',
+        [],
+      ).errors,
+    ).toEqual([]);
+  });
+  it('does not match an existing document key to a different LCT account', () => {
+    expect(
+      planImport('Unique Number,Account Name\nLCT002,A', [
+        { memberId: 'LCT002', accountNumber: 'LCT003', fullName: 'B' },
+      ] as Member[]).errors,
+    ).not.toEqual([]);
+  });
   it('supports embedded newlines and escaped quotes', () =>
     expect(csvRows('A,B\n"a\nb","x""y"')[1]).toEqual(['a\nb', 'x"y']));
   it('rejects malformed files and missing columns', () => {
     expect(() => csvRows('"oops')).toThrow();
-    expect(() => planImport('Name,ID\nA,1', [])).toThrow();
+    expect(() =>
+      planImport('Account Id,Account Number,Account Name\n1,2,A', []),
+    ).toThrow('Unique Number');
   });
 });

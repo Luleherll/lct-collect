@@ -1,17 +1,8 @@
 import type { Row } from '../lib/models';
-export const Account = ({
-  name,
-  number,
-  id,
-}: {
-  name: string;
-  number: string;
-  id: string;
-}) => (
+export const Account = ({ name, number }: { name: string; number: string }) => (
   <div className="account">
     <strong>{name}</strong>
     <span>Account no. {number}</span>
-    <span>Account ID {id}</span>
   </div>
 );
 export const Status = ({ row }: { row: Row }) => (

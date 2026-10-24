@@ -562,7 +562,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           ? r.line.recorded
           : r.line.state === 'active' && !r.line.recorded)) &&
       (agent === 'all' || r.entry.agentId === agent) &&
-      `${r.entry.memberNameSnapshot} ${r.entry.memberId} ${r.entry.accountNumberSnapshot}`
+      `${r.entry.memberNameSnapshot} ${r.entry.accountNumberSnapshot}`
         .toLowerCase()
         .includes(q.toLowerCase().trim()),
   );
@@ -648,9 +648,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           >
             <button className="entry-identity" onClick={() => showLine(row)}>
               <strong>{row.entry.memberNameSnapshot}</strong>
-              <span>
-                {row.entry.accountNumberSnapshot} · ID {row.entry.memberId}
-              </span>
+              <span>{row.entry.accountNumberSnapshot}</span>
               <span>
                 {timeLabel(row.entry.createdAt)}
                 {!viewer && (
@@ -1001,7 +999,6 @@ export default function App({ route: initialRoute }: { route: string }) {
                             <Account
                               name={m.fullName}
                               number={m.accountNumber}
-                              id={m.memberId}
                             />
                             <Icon name="chevron-right" />
                           </button>
@@ -1024,7 +1021,6 @@ export default function App({ route: initialRoute }: { route: string }) {
                     <Account
                       name={member.fullName}
                       number={member.accountNumber}
-                      id={member.memberId}
                     />
                   ) : (
                     <p className="muted">
@@ -1385,11 +1381,7 @@ export default function App({ route: initialRoute }: { route: string }) {
       )}
       {modal === 'review' && member && (
         <Modal title="Review entry" onClose={() => !busy && setModal(null)}>
-          <Account
-            name={member.fullName}
-            number={member.accountNumber}
-            id={member.memberId}
-          />
+          <Account name={member.fullName} number={member.accountNumber} />
           {error && (
             <p className="alert error" role="alert">
               {error}
@@ -1446,7 +1438,6 @@ export default function App({ route: initialRoute }: { route: string }) {
           <Account
             name={detailRow.entry.memberNameSnapshot}
             number={detailRow.entry.accountNumberSnapshot}
-            id={detailRow.entry.memberId}
           />
           <p>
             {LABELS[detailRow.type]} · UGX {money(detailRow.line.amount)}
@@ -1495,7 +1486,6 @@ export default function App({ route: initialRoute }: { route: string }) {
           <Account
             name={detailRow.entry.memberNameSnapshot}
             number={detailRow.entry.accountNumberSnapshot}
-            id={detailRow.entry.memberId}
           />
           <div className="detail-amount">
             {LABELS[detailRow.type]}

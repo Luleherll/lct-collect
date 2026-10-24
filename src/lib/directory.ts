@@ -24,7 +24,7 @@ export async function previewDirectory(text: string) {
     const owner = owners.get(row.accountNumber);
     if (owner && owner !== row.memberId)
       plan.errors.push(
-        `Account number ${row.accountNumber} is reserved for another account ID.`,
+        `Account number ${row.accountNumber} is reserved for another directory record.`,
       );
   }
   return { ...plan, reserved: reservations.docs.map((d) => d.id) };
@@ -78,11 +78,11 @@ export async function applyDirectory(
                 : !!current
             )
               throw new Error(
-                `Account ${r.memberId} changed since preview. Re-preview the file.`,
+                `Account ${r.accountNumber} changed since preview. Re-preview the file.`,
               );
             if (owners[i].exists() && owners[i].data()!.memberId !== r.memberId)
               throw new Error(
-                `Account number ${r.accountNumber} is reserved for another ID.`,
+                `Account number ${r.accountNumber} is reserved for another directory record.`,
               );
             if (!owners[i].exists())
               tx.set(reservations[i], {

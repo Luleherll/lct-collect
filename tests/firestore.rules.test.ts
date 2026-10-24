@@ -504,17 +504,17 @@ describe('roles and immutable audit history', () => {
     await assertSucceeds(
       runTransaction(db, async (tx) => {
         const refs = Array.from({ length: 5 }, (_, i) =>
-          doc(db, 'members', String(1000 + i)),
+          doc(db, 'members', `LCT${1000 + i}`),
         );
         await Promise.all(refs.map((ref) => tx.get(ref)));
         refs.forEach((ref, i) => {
-          tx.set(doc(db, 'accountNumbers', String(900000 + i)), {
-            memberId: String(1000 + i),
+          tx.set(doc(db, 'accountNumbers', `LCT${1000 + i}`), {
+            memberId: `LCT${1000 + i}`,
             updatedAt: serverTimestamp(),
           });
           tx.set(ref, {
-            memberId: String(1000 + i),
-            accountNumber: String(900000 + i),
+            memberId: `LCT${1000 + i}`,
+            accountNumber: `LCT${1000 + i}`,
             fullName: `Example ${i}`,
             searchName: `example ${i}`,
             active: true,
@@ -523,6 +523,159 @@ describe('roles and immutable audit history', () => {
         });
       }),
     );
+  });
+  it('creates and updates a reserved LCT account and rejects schema/identity changes', async () => {
+    const db = env
+      .authenticatedContext('admin-a')
+      .firestore() as unknown as Firestore;
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'accountNumbers', 'LCT002'), {
+      memberId: 'LCT002',
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'members', 'LCT002'), {
+      ...member,
+      memberId: 'LCT002',
+      accountNumber: 'LCT002',
+      updatedAt: serverTimestamp(),
+    });
+    await assertSucceeds(batch.commit());
+    await assertSucceeds(
+      updateDoc(doc(db, 'members', 'LCT002'), {
+        fullName: 'Renamed',
+        searchName: 'renamed',
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'members', 'LCT002'), {
+        accountNumber: 'LCT003',
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'members', 'LCT002'), {
+        fullName: 'x'.repeat(121),
+        searchName: 'x'.repeat(121),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'members', 'LCT002'), {
+        extra: 'forged',
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'members', 'LCT002'), {
+        fullName: 42,
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(db, 'accountNumbers', 'LCT002'), { memberId: '137' }),
+    );
+  });
+  it('links a legacy directory account without rewriting previous entries or losing new financial writes', async () => {
+    const field = agent();
+    await create(field);
+    const db = env
+      .authenticatedContext('admin-a')
+      .firestore() as unknown as Firestore;
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'accountNumbers', 'LCT002'), {
+      memberId: '137',
+      updatedAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'members', '137'), {
+      accountNumber: 'LCT002',
+      updatedAt: serverTimestamp(),
+    });
+    await assertSucceeds(batch.commit());
+    expect(
+      (await getDoc(doc(field, 'entries', 'entry_00000001'))).data()!
+        .accountNumberSnapshot,
+    ).toBe(member.accountNumber);
+    await assertSucceeds(
+      create(
+        field,
+        'entry_00000002',
+        { deposit: 10 },
+        { accountNumberSnapshot: 'LCT002' },
+      ),
+    );
+    expect(
+      (await getDoc(doc(field, 'entries', 'entry_00000002'))).data()!.memberId,
+    ).toBe('137');
+    // A cached older client cannot revert an already-linked record.
+    await assertFails(
+      updateDoc(doc(db, 'members', '137'), {
+        accountNumber: member.accountNumber,
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    const relink = writeBatch(db);
+    relink.set(doc(db, 'accountNumbers', 'LCT003'), {
+      memberId: '137',
+      updatedAt: serverTimestamp(),
+    });
+    relink.update(doc(db, 'members', '137'), {
+      accountNumber: 'LCT003',
+      updatedAt: serverTimestamp(),
+    });
+    await assertFails(relink.commit());
+    await assertFails(
+      create(
+        field,
+        'entry_00000003',
+        { deposit: 10 },
+        { accountNumberSnapshot: member.accountNumber },
+      ),
+    );
+  });
+  it('rejects malformed LCT numbers, mismatched LCT identity and non-owner LCT writes', async () => {
+    const owner = env
+      .authenticatedContext('admin-a')
+      .firestore() as unknown as Firestore;
+    for (const [id, number] of [
+      ['9001', '9001'],
+      ['9001', 'LCT9001'],
+      ['LCT002', 'LCT003'],
+      ['LCT002', 'lct002'],
+      ['LCT002', 'LCT'],
+      ['LCT' + '0'.repeat(38), 'LCT' + '0'.repeat(38)],
+    ]) {
+      const b = writeBatch(owner);
+      b.set(doc(owner, 'accountNumbers', number), {
+        memberId: id,
+        updatedAt: serverTimestamp(),
+      });
+      b.set(doc(owner, 'members', id), {
+        ...member,
+        memberId: id,
+        accountNumber: number,
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(b.commit());
+    }
+    for (const client of [
+      agent(),
+      viewer(),
+      env.unauthenticatedContext().firestore() as unknown as Firestore,
+    ]) {
+      const b = writeBatch(client);
+      b.set(doc(client, 'accountNumbers', 'LCT002'), {
+        memberId: 'LCT002',
+        updatedAt: serverTimestamp(),
+      });
+      b.set(doc(client, 'members', 'LCT002'), {
+        ...member,
+        memberId: 'LCT002',
+        accountNumber: 'LCT002',
+        updatedAt: serverTimestamp(),
+      });
+      await assertFails(b.commit());
+    }
   });
   it('rejects unreserved member numbers and reservation reassignment', async () => {
     const db = env

@@ -73,7 +73,7 @@ export function searchMembers<
   const q = term.trim().toLowerCase();
   if (!q) return [];
   const rank = (m: T) =>
-    m.memberId.toLowerCase() === q || m.accountNumber.toLowerCase() === q
+    m.accountNumber.toLowerCase() === q
       ? 0
       : m.fullName.toLowerCase().startsWith(q)
         ? 1
@@ -82,9 +82,7 @@ export function searchMembers<
     .filter(
       (m) =>
         m.active &&
-        `${m.fullName} ${m.memberId} ${m.accountNumber}`
-          .toLowerCase()
-          .includes(q),
+        `${m.fullName} ${m.accountNumber}`.toLowerCase().includes(q),
     )
     .sort((a, b) => rank(a) - rank(b) || a.fullName.localeCompare(b.fullName))
     .slice(0, 8);
