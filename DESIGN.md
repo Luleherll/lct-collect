@@ -45,7 +45,7 @@ One familiar sans family; stable rem/px sizing and tabular numerals for financia
 
 ## Layout
 
-Single column collection page, max 620px; office/admin up to 1100px. At <=600px, amount labels sit above full-width 56px currency inputs. At <=360px actions stack with primary action first. Document scrolling stays natural; dialogs scroll internally and retain reachable actions. Safe-area padding and a skip link serve mobile and keyboard users.
+Single column collection page, max 620px; office/admin up to 1100px. Collection uses compact labels above full-width 44px currency inputs and paired actions, including at 320px. Header and search remain compact; long identities and zoom may require scrolling. Recent entries use dense rows and a cash-breakdown dialog; directory CSV upload lives in the header with 50-account pagination. Document scrolling stays natural; dialogs scroll internally and retain reachable actions. Safe-area padding and a skip link serve mobile and keyboard users.
 
 ## Elevation & Depth
 
@@ -57,7 +57,7 @@ Flat bordered panels. Dimmed native dialog backdrop; no ornamental shadows.
 
 ## Components
 
-`SearchField`, `Modal`, `Account`, `ErrorBoundary`, and `useRecords` are shared owners. `Login` and `MemberAdmin` load on demand. States use text as well as color, focus rings and >=44px touch targets. Search clearing restores input focus; forms preserve invalid text. Feedback includes account and amounts, and no financial success precedes server confirmation.
+`SearchField`, `Modal`, `Account`, `ErrorBoundary`, and `useRecords` are shared owners. `Login` and `MemberAdmin` load on demand. Internal routes retain the mounted app, authentication and unchanged query subscriptions. States use text as well as color, focus rings and >=44px touch targets. Search clearing restores input focus; forms preserve invalid text. Entry success uses a six-second dismissible toast with account and amounts; errors remain visible. No financial success precedes server confirmation. Viewed records cache automatically, and sign-out attempts to clear the cache.
 
 ## Do's and Don'ts
 

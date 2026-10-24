@@ -8,7 +8,13 @@ import {
   where,
   type QueryConstraint,
 } from 'firebase/firestore';
-import { auth, db, logout, memoryOnlySession } from '../lib/firebase';
+import {
+  auth,
+  db,
+  logout,
+  memoryOnlySession,
+  recordCacheAvailable,
+} from '../lib/firebase';
 import {
   amount,
   dayLabel,
@@ -75,7 +81,9 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
-  const [modal, setModal] = useState<'review' | 'line' | 'undo' | null>(null),
+  const [modal, setModal] = useState<
+      'review' | 'line' | 'undo' | 'cash' | null
+    >(null),
     [selectedRow, setSelectedRow] = useState<Row | null>(null),
     [reason, setReason] = useState('');
   const [member, setMember] = useState<Member | null>(null),
@@ -102,6 +110,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     label: string;
     run: () => void;
   } | null>(null);
+  const [openingValue, setOpeningValue] = useState('0');
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [undoRow, setUndoRow] = useState<Row | null>(null);
   const [historyCount, setHistoryCount] = useState(20);
@@ -129,6 +138,38 @@ export default function App({ route: initialRoute }: { route: string }) {
     if (dirty) setGuard({ title, body, label, run });
     else run();
   }
+  function navigateTo(path: string, replace = false) {
+    const routes: Record<string, string> = {
+      '/agent/': 'agent',
+      '/agent/recent/': 'recent',
+      '/agent/history/': 'history',
+      '/viewer/': 'viewer',
+      '/admin/': 'admin',
+      '/login/': 'login',
+    };
+    const next = routes[path];
+    if (!next) {
+      window.location.assign(path);
+      return;
+    }
+    window.history[replace ? 'replaceState' : 'pushState'](null, '', path);
+    setRoute(next);
+    setQ('');
+    setType('all');
+    setStatus(next === 'viewer' ? 'unrecorded' : 'all');
+    setHistoryDay('');
+    setError('');
+    setModal(null);
+    if (next !== 'agent') {
+      setMember(null);
+      setValues({ ...EMPTY_AMOUNTS });
+    }
+    document.title = `${next === 'recent' ? 'Recent entries' : next === 'history' ? 'Session history' : 'LCT Collect'} · LCT Collect`;
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    requestAnimationFrame(() =>
+      document.getElementById('main-content')?.focus({ preventScroll: true }),
+    );
+  }
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!allowUnload.current && (dirty || busy || uncertain)) {
@@ -153,29 +194,61 @@ export default function App({ route: initialRoute }: { route: string }) {
         !anchor ||
         anchor.target === '_blank' ||
         anchor.hasAttribute('download') ||
-        (!dirty && !busy && !uncertain)
+        anchor.origin !== location.origin ||
+        anchor.hash
       )
         return;
       if (
-        anchor.hash &&
-        anchor.origin === window.location.origin &&
-        anchor.pathname === window.location.pathname &&
-        anchor.search === window.location.search
+        ![
+          '/agent/',
+          '/agent/recent/',
+          '/agent/history/',
+          '/viewer/',
+          '/admin/',
+          '/login/',
+        ].includes(anchor.pathname)
       )
         return;
       event.preventDefault();
-      protect(() => {
-        allowUnload.current = true;
-        window.location.assign(anchor.href);
-      });
+      if (anchor.pathname !== location.pathname)
+        protect(() => navigateTo(anchor.pathname));
+    };
+    const back = () => {
+      const target = location.pathname;
+      const current = {
+        agent: '/agent/',
+        recent: '/agent/recent/',
+        history: '/agent/history/',
+        viewer: '/viewer/',
+        admin: '/admin/',
+        login: '/login/',
+      }[route];
+      // Fragment navigation (including the skip link) keeps the current screen.
+      if (target === current) return;
+      if (dirty || busy || uncertain) {
+        history.pushState(null, '', current);
+        protect(() => navigateTo(target, true));
+      } else navigateTo(target, true);
     };
     window.addEventListener('beforeunload', beforeUnload);
-    document.addEventListener('click', navigate, true);
+    window.addEventListener('popstate', back);
+    document.addEventListener('click', navigate);
     return () => {
       window.removeEventListener('beforeunload', beforeUnload);
-      document.removeEventListener('click', navigate, true);
+      window.removeEventListener('popstate', back);
+      document.removeEventListener('click', navigate);
     };
-  }, [dirty, busy, uncertain]);
+  }, [dirty, busy, uncertain, route]);
+  useEffect(() => {
+    if (!receipt) return;
+    const timer = window.setTimeout(() => setReceipt(null), 6000);
+    return () => clearTimeout(timer);
+  }, [receipt]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(''), 6000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const authorized = !!user && !!profile?.active;
   useEffect(
     () =>
@@ -276,7 +349,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         ? [orderBy('workday', 'desc'), limit(historyCount)]
         : [where('workday', '==', today)]),
     ],
-    `${user?.uid}/${route}/${today}/${historyCount}`,
+    `${user?.uid}/${route === 'history' ? historyCount : 'current'}/${today}`,
     authorized && isAgent,
   );
   const entryDay = route === 'history' ? historyDay : isViewer ? date : today;
@@ -287,7 +360,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   const entries = useRecords<Entry>(
     'entries',
     constraints,
-    `${user?.uid}/${entryDay}/${route}`,
+    `${user?.uid}/${entryDay}`,
     authorized && !isAdmin && !!entryDay,
   );
   const session = sessions.data.find((s) => s.workday === today);
@@ -432,7 +505,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         workday: session.workday,
         lines: savedLines,
       });
-      setNotice('Entry saved.');
+      setNotice('');
     } catch (e) {
       setUncertain(true);
       setModal(null);
@@ -458,7 +531,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           'No saved entry was found. Your amounts have not been sent again. Review the entry to retry safely.',
         );
       }
-    }, 'Previous entry is saved.');
+    }, '');
   }
   function showLine(row: Row) {
     setSelectedRow(row);
@@ -580,7 +653,12 @@ export default function App({ route: initialRoute }: { route: string }) {
               </span>
               <span>
                 {timeLabel(row.entry.createdAt)}
-                {''}
+                {!viewer && (
+                  <>
+                    {' '}
+                    · <Status row={row} />
+                  </>
+                )}
               </span>
             </button>
             <div className="entry-kind">
@@ -588,7 +666,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               {viewer && <small>{row.entry.agentNameSnapshot}</small>}
             </div>
             <strong className="row-money">UGX {money(row.line.amount)}</strong>
-            <Status row={row} />
+            {viewer && <Status row={row} />}
             {viewer ? (
               <button
                 className={
@@ -635,7 +713,20 @@ export default function App({ route: initialRoute }: { route: string }) {
     );
   }
   if (!authReady)
-    return <div className="loading">Connecting to LCT Collect…</div>;
+    return (
+      <div className="boot-shell">
+        <header className="app-header">
+          <div className="header-inner">
+            <div className="brand">
+              <a href="/">LCT Collect</a>
+            </div>
+          </div>
+        </header>
+        <p className="loading" role="status">
+          Opening your notebook…
+        </p>
+      </div>
+    );
   if (!user)
     return (
       <Suspense fallback={<p role="status">Loading sign in…</p>}>
@@ -667,20 +758,10 @@ export default function App({ route: initialRoute }: { route: string }) {
             <p>
               {profile.displayName} · {dayLabel(headerDay)}
             </p>
-            {import.meta.env.PUBLIC_APP_ENV !== 'production' && (
-              <span className="environment">Staging</span>
-            )}
           </div>
           <nav aria-label="Main navigation">
             {isAgent ? (
               <>
-                <a
-                  className={route === 'history' ? 'active' : ''}
-                  href="/agent/history/"
-                >
-                  <Icon name="clock-history" />
-                  <span>History</span>
-                </a>
                 <a
                   className={route === 'recent' ? 'active' : ''}
                   href="/agent/recent/"
@@ -688,7 +769,16 @@ export default function App({ route: initialRoute }: { route: string }) {
                   <Icon name="list-ul" />
                   <span>Recent entries</span>
                 </a>
+                <a
+                  className={route === 'history' ? 'active' : ''}
+                  href="/agent/history/"
+                >
+                  <Icon name="clock-history" />
+                  <span>History</span>
+                </a>
               </>
+            ) : isAdmin ? (
+              <div id="owner-header-actions" />
             ) : (
               <a href={HOME[profile.role]}>
                 <Icon name={isViewer ? 'list-ul' : 'people'} />
@@ -701,13 +791,14 @@ export default function App({ route: initialRoute }: { route: string }) {
       <main
         tabIndex={-1}
         id="main-content"
-        className={isViewer || isAdmin ? 'page wide' : 'page'}
+        className={`${isViewer || isAdmin ? 'page wide' : 'page'} ${route}-page`}
       >
-        {memoryOnlySession && (
+        {(memoryOnlySession || !recordCacheAvailable) && (
           <p className="alert" role="status">
-            Site storage is unavailable. Sign-in lasts while this page is open.
-            Enable site storage to save collection entries or stay signed in
-            when changing pages.
+            Site storage is limited. Offline viewing is limited to this open
+            page.
+            {memoryOnlySession &&
+              ' Sign-in lasts while this page is open. Enable site storage to save collection entries.'}
           </p>
         )}
         {(cached || !network) && (
@@ -731,8 +822,20 @@ export default function App({ route: initialRoute }: { route: string }) {
           </div>
         )}
         {notice && (
-          <div className="alert success" role="status">
-            {notice}
+          <div
+            className="save-toast"
+            role="status"
+            aria-label="Activity update"
+          >
+            <Icon name="check2" />
+            <div>{notice}</div>
+            <button
+              className="icon-button"
+              aria-label="Dismiss update"
+              onClick={() => setNotice('')}
+            >
+              <Icon name="x-lg" />
+            </button>
           </div>
         )}
         {undoRow && (
@@ -755,41 +858,31 @@ export default function App({ route: initialRoute }: { route: string }) {
           </div>
         )}
         {receipt && (
-          <section className="receipt" aria-label="Saved entry receipt">
-            <div className="receipt-heading">
-              <Icon name="check2" />
-              <h2>Entry saved</h2>
-              <button
-                className="icon-button"
-                aria-label="Dismiss saved entry"
-                onClick={() => setReceipt(null)}
-              >
-                <Icon name="x-lg" />
-              </button>
+          <div
+            className="save-toast"
+            role="status"
+            aria-label="Saved entry receipt"
+          >
+            <Icon name="check2" />
+            <div>
+              <strong>Saved · {receipt.memberNameSnapshot}</strong>
+              <span>
+                {TYPES.filter((t) => receipt.lines[t])
+                  .map(
+                    (t) =>
+                      `${LABELS[t]} UGX ${money(receipt.lines[t]!.amount)}`,
+                  )
+                  .join(' · ')}
+              </span>
             </div>
-            <Account
-              name={receipt.memberNameSnapshot}
-              number={receipt.accountNumberSnapshot}
-              id={receipt.memberId}
-            />
-            <ul>
-              {TYPES.filter((t) => receipt.lines[t]).map((t) => (
-                <li key={t}>
-                  {LABELS[t]}{' '}
-                  <strong>UGX {money(receipt.lines[t]!.amount)}</strong>
-                </li>
-              ))}
-            </ul>
-            <p>
-              {dayLabel(receipt.workday)}
-              {receipt.createdAt
-                ? ` · ${timeLabel(receipt.createdAt)}`
-                : ' · Saved just now'}
-            </p>
-            <a className="back-link" href="/agent/recent/">
-              View recent entries <Icon name="chevron-right" />
-            </a>
-          </section>
+            <button
+              className="icon-button"
+              aria-label="Dismiss saved entry"
+              onClick={() => setReceipt(null)}
+            >
+              <Icon name="x-lg" />
+            </button>
+          </div>
         )}
         {uncertain && (
           <div className="alert">
@@ -835,8 +928,14 @@ export default function App({ route: initialRoute }: { route: string }) {
                     Opening cash (UGX)
                     <input
                       name="opening"
+                      type="text"
                       inputMode="numeric"
-                      defaultValue="0"
+                      pattern="[0-9,]*"
+                      onChange={(e) => {
+                        if (/^[0-9,]*$/.test(e.currentTarget.value))
+                          setOpeningValue(e.currentTarget.value);
+                      }}
+                      value={openingValue}
                       required
                     />
                   </label>
@@ -861,27 +960,6 @@ export default function App({ route: initialRoute }: { route: string }) {
                       ? 'Saved cash estimate'
                       : `Up to date${lastSync ? ' · ' + lastSync : ''}`}
                   </p>
-                  <details>
-                    <summary>Cash breakdown</summary>
-                    <dl>
-                      <div>
-                        <dt>Opening cash</dt>
-                        <dd>{money(session.openingCash)}</dd>
-                      </div>
-                      <div>
-                        <dt>Deposits</dt>
-                        <dd>+ {money(session.totalDeposits)}</dd>
-                      </div>
-                      <div>
-                        <dt>Loan instalments</dt>
-                        <dd>+ {money(session.totalLoanInstalments)}</dd>
-                      </div>
-                      <div>
-                        <dt>Withdrawals</dt>
-                        <dd>− {money(session.totalWithdrawals)}</dd>
-                      </div>
-                    </dl>
-                  </details>
                 </section>
                 <section className="card find-card">
                   <h2>Find member</h2>
@@ -981,13 +1059,18 @@ export default function App({ route: initialRoute }: { route: string }) {
                             aria-describedby={
                               fieldErrors[t] ? `${t}-error` : undefined
                             }
+                            type="text"
                             inputMode="numeric"
+                            pattern="[0-9,]*"
+                            autoComplete="off"
                             aria-label={`${LABELS[t]} in UGX`}
                             placeholder="0"
                             disabled={!member || busy || uncertain}
                             value={values[t]}
                             onChange={(e) => {
-                              setValues((v) => ({ ...v, [t]: e.target.value }));
+                              const text = e.currentTarget.value;
+                              if (!/^[0-9,]*$/.test(text)) return;
+                              setValues((v) => ({ ...v, [t]: text }));
                               setFieldErrors((errors) => ({
                                 ...errors,
                                 [t]: undefined,
@@ -1049,7 +1132,16 @@ export default function App({ route: initialRoute }: { route: string }) {
               Back to collection
             </a>
             <div className="page-heading">
-              <h1>Recent entries</h1>
+              <div className="heading-actions">
+                <h1>Recent entries</h1>
+                <button
+                  className="button outline small"
+                  disabled={!session}
+                  onClick={() => setModal('cash')}
+                >
+                  Cash breakdown
+                </button>
+              </div>
               <p>{dayLabel(today)} · Your current workday</p>
             </div>
             {Filters({})}
@@ -1259,6 +1351,36 @@ export default function App({ route: initialRoute }: { route: string }) {
               {guard.label}
             </button>
           </div>
+        </Modal>
+      )}
+      {modal === 'cash' && session && (
+        <Modal title="Cash breakdown" onClose={() => setModal(null)}>
+          <p>
+            {dayLabel(today)}
+            {cached ? ' · Saved estimate' : ''}
+          </p>
+          <dl className="review-lines">
+            <div>
+              <dt>Opening cash</dt>
+              <dd>UGX {money(session.openingCash)}</dd>
+            </div>
+            <div>
+              <dt>Deposits</dt>
+              <dd>+ {money(session.totalDeposits)}</dd>
+            </div>
+            <div>
+              <dt>Loan instalments</dt>
+              <dd>+ {money(session.totalLoanInstalments)}</dd>
+            </div>
+            <div>
+              <dt>Withdrawals</dt>
+              <dd>− {money(session.totalWithdrawals)}</dd>
+            </div>
+            <div className="net">
+              <dt>Expected cash</dt>
+              <dd>UGX {money(session.expectedCash)}</dd>
+            </div>
+          </dl>
         </Modal>
       )}
       {modal === 'review' && member && (

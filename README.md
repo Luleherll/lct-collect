@@ -9,7 +9,7 @@ Mobile-first field collection log for Lusaze Community Traders SACCO. Astro stat
 - Own session history and a separate recent entries page.
 - Office date register with composable search/type/agent/status filters, independent recording checks and audited undo.
 - Owner CSV import with preview. Uses **Account Id**, **Account Number**, **Account Name** only. No deduplication by name; account ID is the document key.
-- Trusted-device read cache and a static-only service worker; all application writes use online transactions.
+- Automatic offline-viewing record cache and a static-only service worker; all application writes use online transactions.
 - Emulator security tests and isolated staging/production workflow definitions.
 
 ## Staging preview

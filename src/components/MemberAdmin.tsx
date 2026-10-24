@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Member } from '../lib/models';
 import type { ImportPlan } from '../lib/import';
 import { applyDirectory, previewDirectory } from '../lib/directory';
@@ -24,7 +25,8 @@ export default function MemberAdmin({
     [error, setError] = useState(''),
     [reading, setReading] = useState(false),
     [progress, setProgress] = useState(''),
-    [q, setQ] = useState('');
+    [q, setQ] = useState(''),
+    [page, setPage] = useState(1);
   const serial = useRef(0);
   async function read(file?: File) {
     if (!file) return;
@@ -50,45 +52,45 @@ export default function MemberAdmin({
       .toLowerCase()
       .includes(q.toLowerCase().trim()),
   );
+  const pageCount = Math.max(1, Math.ceil(matches.length / 50));
+  const currentPage = Math.min(page, pageCount);
+  function changePage(next: number) {
+    setPage(next);
+    requestAnimationFrame(() => {
+      document
+        .getElementById('directory-title')
+        ?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    });
+  }
   return (
     <>
-      <div className="page-heading">
-        <h1>Member directory</h1>
-        <p>
-          Add new accounts and update names or numbers from your Ssentezo CSV
-          export.
-        </p>
-      </div>
-      <section className="card upload-card">
-        <Icon name="file-earmark-spreadsheet" />
-        <h2>Update from CSV</h2>
-        <p>
-          Uses Account Id, Account Number and Account Name. Missing accounts
-          stay in the directory; past entries keep their original details.
-        </p>
-        <label className="button upload-label">
-          <Icon name="upload" />
-          {reading ? 'Checking file…' : 'Choose CSV'}
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            disabled={!writable || reading}
-            onChange={(e) => {
-              void read(e.target.files?.[0]);
-              e.target.value = '';
-            }}
-          />
-        </label>
-        {name && <p>{name}</p>}
-        {reading && (
-          <p role="status">Comparing the file with the current directory…</p>
+      {document.getElementById('owner-header-actions') &&
+        createPortal(
+          <label className="button upload-label header-upload">
+            <Icon name="upload" />
+            {reading ? 'Checking…' : 'Choose CSV'}
+            <input
+              aria-label="Choose CSV"
+              type="file"
+              accept=".csv,text/csv"
+              disabled={!writable || reading}
+              onChange={(e) => {
+                void read(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>,
+          document.getElementById('owner-header-actions')!,
         )}
-        {error && (
-          <p className="field-error" role="alert">
-            {error}
-          </p>
-        )}
-      </section>
+      {reading && (
+        <p role="status">Comparing {name} with the current directory…</p>
+      )}
+      {error && (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      )}
       {plan && (
         <section className="card">
           <h2>Review import</h2>
@@ -194,13 +196,25 @@ export default function MemberAdmin({
           {progress && <p role="status">{progress}</p>}
         </section>
       )}
-      <section className="card">
-        <h2>
-          {members.length} {cached ? 'saved ' : ''}accounts
-        </h2>
-        <SearchField label="Search directory" value={q} onChange={setQ} />
+      <section className="directory-section">
+        <div className="heading-actions">
+          <h1 id="directory-title" tabIndex={-1}>
+            Member directory
+          </h1>
+          <span className="muted">
+            {members.length} {cached ? 'saved ' : ''}accounts
+          </span>
+        </div>
+        <SearchField
+          label="Search directory"
+          value={q}
+          onChange={(value) => {
+            setQ(value);
+            setPage(1);
+          }}
+        />
         <div className="directory-list">
-          {matches.slice(0, 50).map((m) => (
+          {matches.slice((currentPage - 1) * 50, currentPage * 50).map((m) => (
             <div key={m.memberId}>
               <Account
                 name={m.fullName}
@@ -211,11 +225,33 @@ export default function MemberAdmin({
             </div>
           ))}
         </div>
-        <p className="muted">
-          {matches.length
-            ? `Showing ${Math.min(50, matches.length)} of ${matches.length} matches. Refine your search to find an account.`
-            : 'No matching accounts. Try a different name, account ID or number.'}
-        </p>
+        <nav className="pagination" aria-label="Directory pages">
+          <button
+            className="button outline small"
+            disabled={currentPage === 1}
+            onClick={() => changePage(currentPage - 1)}
+          >
+            Previous
+          </button>
+          <span role="status">
+            {matches.length
+              ? `${(currentPage - 1) * 50 + 1}–${Math.min(currentPage * 50, matches.length)} of ${matches.length}`
+              : 'No matches'}{' '}
+            · Page {currentPage} of {pageCount}
+          </span>
+          <button
+            className="button outline small"
+            disabled={currentPage === pageCount}
+            onClick={() => changePage(currentPage + 1)}
+          >
+            Next
+          </button>
+        </nav>
+        {!matches.length && (
+          <p className="muted">
+            No matching accounts. Try a different name, account ID or number.
+          </p>
+        )}
       </section>
       <p className="muted">
         The owner manages login accounts and access profiles separately in

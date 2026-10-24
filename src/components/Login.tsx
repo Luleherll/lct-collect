@@ -39,7 +39,7 @@ export default function Login({ notice }: { notice: string }) {
               const email = usernameEmail(data.get('username') as string);
               if (!data.get('password'))
                 throw new Error('Enter your password.');
-              await prepareLogin(!!data.get('trusted'));
+              await prepareLogin();
               await signInWithEmailAndPassword(
                 auth,
                 email,
@@ -84,17 +84,10 @@ export default function Login({ notice }: { notice: string }) {
               </button>
             </div>
           </label>
-          <label className="checkbox-label">
-            <input name="trusted" type="checkbox" />
-            <span>
-              Save records for offline viewing on this trusted, non-shared
-              device.
-            </span>
-          </label>
           <p className="small-note">
-            Sign-in lasts for this browser session. Saved records can remain
-            accessible on a disconnected device. Only enable this on a device
-            you trust.
+            Records you view are automatically saved on this device for offline
+            viewing. Sign out to remove saved records. Sign-in lasts for this
+            browser session.
           </p>
           <button className="button full" disabled={busy}>
             {busy ? 'Signing in…' : 'Sign in'}

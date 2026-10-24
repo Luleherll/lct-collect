@@ -33,8 +33,16 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await select(page);
   await expect(page.locator('#deposit')).toBeFocused();
   await page.locator('#deposit').fill('1.5');
+  await expect(page.locator('#deposit')).toHaveValue('');
+  await page.locator('#deposit').fill('letters');
+  await expect(page.locator('#deposit')).toHaveValue('');
+  await expect(page.locator('#deposit')).toHaveAttribute(
+    'inputmode',
+    'numeric',
+  );
+  await page.locator('#deposit').fill('100000001');
   await page.locator('#withdrawal').focus();
-  await expect(page.locator('#deposit-error')).toContainText('whole UGX');
+  await expect(page.locator('#deposit-error')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'New entry' })).toBeVisible();
   await page.locator('#deposit').fill('21,007');
   await page.locator('#withdrawal').focus();
@@ -58,10 +66,10 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await expect(page.getByRole('dialog')).toContainText('21,007');
   await page.getByRole('button', { name: 'Confirm & save' }).click();
   await expect(
-    page.getByRole('region', { name: 'Saved entry receipt' }),
+    page.getByRole('status', { name: 'Saved entry receipt' }),
   ).toContainText('Example Member 3');
   await expect(
-    page.getByRole('region', { name: 'Saved entry receipt' }),
+    page.getByRole('status', { name: 'Saved entry receipt' }),
   ).toContainText('21,007');
   await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
   const row = page.locator('.entry-row').filter({ hasText: '21,007' }).first();
@@ -228,7 +236,7 @@ test('offline and operational rollover stop writes without replaying the draft',
   ).toBeVisible();
 });
 
-test('restored save reference checks the server and shows the saved account and amounts', async ({
+test('restored save reference checks the server and shows a saved-account toast', async ({
   page,
 }) => {
   await page.addInitScript(
@@ -241,10 +249,10 @@ test('restored save reference checks the server and shows the saved account and 
   ).toBeEnabled();
   await page.getByRole('button', { name: 'Check save status' }).click();
   await expect(
-    page.getByRole('region', { name: 'Saved entry receipt' }),
+    page.getByRole('status', { name: 'Saved entry receipt' }),
   ).toContainText('Example Member 1');
   await expect(
-    page.getByRole('region', { name: 'Saved entry receipt' }),
+    page.getByRole('status', { name: 'Saved entry receipt' }),
   ).toContainText('25,000');
   await expect(
     page.getByRole('button', { name: 'Check save status' }),
@@ -325,4 +333,128 @@ test('long identities reflow and collection, review, history and office share th
     path: join(evidence, 'after-history-desktop.png'),
     fullPage: true,
   });
+});
+
+test('compact collection fits a mobile viewport and keeps navigation mounted with automatic offline viewing', async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 390, height: 740 });
+  await page.goto('/login/');
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
+  await login(page);
+  await select(page);
+  await expect(page.getByText('Staging', { exact: true })).toHaveCount(0);
+  const bottom = await page
+    .getByRole('button', { name: 'Review entry', exact: true })
+    .evaluate((el) => el.getBoundingClientRect().bottom);
+  expect(bottom).toBeLessThanOrEqual(740);
+  await expect(page.getByText('Cash breakdown', { exact: true })).toHaveCount(
+    0,
+  );
+  await page.evaluate(() => {
+    (window as Window & { mountedMarker?: boolean }).mountedMarker = true;
+  });
+  const names = await page
+    .locator('nav[aria-label="Main navigation"] a')
+    .allTextContents();
+  expect(names.map((n) => n.trim())).toEqual(['Recent entries', 'History']);
+  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  expect(
+    await page.evaluate(
+      () => (window as Window & { mountedMarker?: boolean }).mountedMarker,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: join(evidence, 'compact-recent-mobile.png'),
+    fullPage: false,
+  });
+  await page
+    .getByRole('button', { name: 'Cash breakdown', exact: true })
+    .click();
+  await page.screenshot({
+    path: join(evidence, 'compact-cash-dialog.png'),
+    fullPage: false,
+  });
+  await expect(page.getByRole('dialog')).toContainText('Opening cash');
+  await page.keyboard.press('Escape');
+  await context.setOffline(true);
+  await page.getByRole('link', { name: 'Back to collection' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Expected cash' }),
+  ).toBeVisible();
+  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await expect(page.locator('.entry-row').first()).toBeVisible();
+  await page.goBack();
+  await expect(
+    page.getByRole('heading', { name: 'Expected cash' }),
+  ).toBeVisible();
+  await context.setOffline(false);
+  await noOverflow(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(page.locator('.page')).toHaveCSS('animation-name', 'none');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = '2';
+  });
+  await noOverflow(page);
+});
+
+test('directory paginates beyond fifty accounts and search resets its page', async ({
+  page,
+}) => {
+  await login(page, 'admin');
+  await expect(page.locator('.directory-list > div')).toHaveCount(50);
+  await page.screenshot({
+    path: join(evidence, 'compact-directory-mobile.png'),
+    fullPage: false,
+  });
+  await expect(page.locator('.app-header input[type=file]')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(
+    page.getByRole('navigation', { name: 'Directory pages' }),
+  ).toContainText('51–100');
+  await expect(
+    page.getByRole('button', { name: 'Previous', exact: true }),
+  ).toBeEnabled();
+  await page.getByLabel('Search directory', { exact: true }).fill('006');
+  await expect(
+    page.getByRole('navigation', { name: 'Directory pages' }),
+  ).toContainText('Page 1 of 1');
+  await page.screenshot({
+    path: join(evidence, 'compact-admin-mobile.png'),
+    fullPage: false,
+  });
+  await noOverflow(page);
+});
+
+test('successful collection uses only an auto-closing toast', async ({
+  page,
+}) => {
+  await login(page);
+  await select(page);
+  await page.locator('#deposit').fill('12001');
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm & save' }).click();
+  const toast = page.getByRole('status', { name: 'Saved entry receipt' });
+  await expect(toast).toContainText('12,001');
+  await expect(page.locator('.alert.success')).toHaveCount(0);
+  await expect(toast).toHaveCount(0, { timeout: 9000 });
+});
+
+test('automatic record cache survives reload while the database is unavailable', async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await expect(page.locator('.entry-row').first()).toBeVisible();
+  await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
+  await page.reload();
+  await expect(
+    page.getByRole('heading', { name: 'Recent entries', exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.entry-row').first()).toBeVisible();
+  await expect(
+    page.getByRole('status').filter({ hasText: 'saved records' }),
+  ).toBeVisible();
 });

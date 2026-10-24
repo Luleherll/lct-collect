@@ -1,5 +1,6 @@
 ---
 import AppLayout from '../layouts/AppLayout.astro';
 import App from '../components/AppRoot';
+import AppLoading from '../components/AppLoading.astro';
 ---
-<AppLayout title="Sign in · LCT Collect"><App route="login" client:only="react"/></AppLayout>
+<AppLayout title="Sign in · LCT Collect"><App route="login" client:only="react"><AppLoading slot="fallback" /></App></AppLayout>

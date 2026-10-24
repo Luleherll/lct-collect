@@ -55,8 +55,8 @@ export const auth = initializeAuth(app, {
   persistence: [browserSessionPersistence, inMemoryPersistence],
 });
 export let memoryOnlySession = false;
-export async function prepareLogin(trusted: boolean) {
-  storage.set('local', 'lct-trusted-device', trusted ? 'yes' : 'no');
+export let recordCacheAvailable = true;
+export async function prepareLogin() {
   const available = storage.set('session', 'lct-auth-storage-check', '1');
   storage.remove('session', 'lct-auth-storage-check');
   memoryOnlySession = !available;
@@ -73,14 +73,12 @@ export async function prepareLogin(trusted: boolean) {
 let database: ReturnType<typeof initializeFirestore> | undefined;
 export function db() {
   if (!database) {
-    let trusted = false;
-    try {
-      trusted = storage.get('local', 'lct-trusted-device') === 'yes';
-    } catch {
-      /* Memory cache remains available. */
-    }
+    // Multi-tab persistence needs Web Storage as well as IndexedDB. If the
+    // browser denies it, keep the online app usable with a memory-only cache.
+    recordCacheAvailable = storage.set('local', 'lct-cache-storage-check', '1');
+    storage.remove('local', 'lct-cache-storage-check');
     database = initializeFirestore(app, {
-      localCache: trusted
+      localCache: recordCacheAvailable
         ? persistentLocalCache({ tabManager: persistentMultipleTabManager() })
         : memoryLocalCache(),
     });
