@@ -281,32 +281,6 @@ small,
   width: 21px;
   height: 21px;
 }
-.suggestions {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-.suggestions li + li {
-  border-top: 1px solid var(--line);
-}
-.suggestions li button {
-  padding: 13px 3px;
-  border: 0;
-  background: white;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  text-align: left;
-  color: var(--navy);
-  min-height: 64px;
-}
-.suggestions .account strong {
-  font-size: 17px;
-}
-.suggestions .account span {
-  font-size: 13px;
-}
 .no-match {
   padding: 16px 0;
   color: var(--muted);
@@ -1994,4 +1968,118 @@ footer {
 .entry-list .entry-identity .status {
   font-size: 11px;
   padding: 0 4px;
+}
+
+/* Members and their distinct Ssentezo accounts. */
+.member-results {
+  width: 100%;
+}
+.member-result {
+  border-bottom: 1px solid var(--line);
+}
+.member-result > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  cursor: pointer;
+  min-height: 64px;
+  padding: 10px 0;
+}
+.member-result > summary::-webkit-details-marker {
+  display: none;
+}
+.member-result-identity {
+  flex: 1;
+  min-width: 0;
+}
+.member-result-identity > strong {
+  display: block;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.member-result-identity > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.account-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.member-result > summary > .icon {
+  width: 18px;
+  height: 18px;
+}
+.member-result[open] > summary > .icon {
+  transform: rotate(90deg);
+}
+.group-chip {
+  display: inline-flex;
+  width: max-content;
+  align-items: center;
+  border: 1px solid #a8cdbb;
+  background: var(--pale);
+  color: var(--green) !important;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 11px !important;
+  font-weight: 600;
+  line-height: 1.6 !important;
+}
+.member-accounts {
+  margin: 0 0 10px 8px;
+  padding: 0 10px;
+  border-left: 2px solid #a8cdbb;
+  background: #f8faf9;
+}
+.member-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding-block: 6px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.member-account + .member-account {
+  border-top: 1px solid var(--line);
+}
+.member-account > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.account-choice {
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  padding: 8px 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.account-choice:hover {
+  color: var(--green);
+}
+.directory-list > .member-results {
+  padding: 0;
+  border: 0;
+  display: block;
+}
+.agent-page .member-result > summary {
+  padding-block: 8px;
+}
+.member-result > summary:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }

@@ -1,7 +1,23 @@
 import type { Row } from '../lib/models';
-export const Account = ({ name, number }: { name: string; number: string }) => (
+export const Account = ({
+  name,
+  number,
+  memberNumber,
+}: {
+  name: string;
+  number: string;
+  memberNumber?: string;
+}) => (
   <div className="account">
     <strong>{name}</strong>
+    {memberNumber && (
+      <span>
+        {memberNumber}{' '}
+        {memberNumber.startsWith('ABC') && (
+          <span className="group-chip">Group</span>
+        )}
+      </span>
+    )}
     <span>Account no. {number}</span>
   </div>
 );

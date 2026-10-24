@@ -1,8 +1,7 @@
-// Directory: members/{memberId} stores name, LCT accountNumber, searchName,
-// active and server updatedAt. New LCT identities equal their account number;
-// numeric identities/numbers remain valid for existing records and reservations.
-// accountNumbers/{number} permanently binds a number to one member identity.
-// Existing role access and immutable financial entry snapshots stay unchanged.
+// Directory records represent individual Ssentezo accounts. uniqueNumber is the
+// shared LCT member / ABC group identifier; accountNumber is the actual numeric
+// Ssentezo account. Existing record keys and financial snapshots are retained.
+// accountNumbers permanently reserves each numeric account to its record.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -50,7 +49,7 @@ service cloud.firestore {
     function entryCreate(e,id) {
       let m = get(/databases/$(database)/documents/members/$(e.memberId)).data;
       return e.keys().hasAll(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines'])
-        && e.keys().hasOnly(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines'])
+        && e.keys().hasOnly(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines','uniqueNumberSnapshot'])
         && e.entryId == id && id.matches('^[A-Za-z0-9_-]{8,100}$')
         && e.sessionId is string && e.workday is string
         && e.agentId == request.auth.uid && e.agentNameSnapshot is string
@@ -58,6 +57,7 @@ service cloud.firestore {
         && e.agentNameSnapshot == profile().displayName
         && e.memberId == m.memberId && m.active == true
         && e.accountNumberSnapshot == m.accountNumber && e.memberNameSnapshot == m.fullName
+        && (!('uniqueNumberSnapshot' in e) || ('uniqueNumber' in m && e.uniqueNumberSnapshot == m.uniqueNumber))
         && e.createdAt == request.time && e.lines is map
         && e.lines.keys().size() >= 1 && e.lines.keys().hasOnly(['deposit','withdrawal','loanInstalment'])
         && (!('deposit' in e.lines) || initialLine(e.lines.deposit))
@@ -125,17 +125,21 @@ service cloud.firestore {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow write: if false;
     }
+    function currentNumber(number) {
+      return number is string && number.size() <= 40 && number.matches('^(LCT|ABC ?)[0-9]+$');
+    }
     function directoryId(id) {
-      return id is string && (id.matches('^[0-9]{1,32}$') || id.matches('^LCT[0-9]{1,37}$'));
+      return id is string && (id.matches('^[0-9]{1,32}$') || id.matches('^acct_[0-9]{1,40}$') || currentNumber(id));
     }
     function accountNumber(number) {
-      return number is string && (number.matches('^[0-9]{1,40}$') || number.matches('^LCT[0-9]{1,37}$'));
+      return number is string && (number.matches('^[0-9]{1,40}$') || currentNumber(number));
     }
     function validMember(m, id) {
-      return m.keys().hasAll(['memberId','accountNumber','fullName','searchName','active','updatedAt'])
-        && m.keys().hasOnly(['memberId','accountNumber','fullName','searchName','active','updatedAt'])
-        && m.memberId == id && directoryId(id) && accountNumber(m.accountNumber)
-        && (!id.matches('^LCT.*') || m.accountNumber == id)
+      return m.keys().hasAll(['memberId','accountNumber','uniqueNumber','fullName','searchName','active','updatedAt'])
+        && m.keys().hasOnly(['memberId','accountNumber','uniqueNumber','fullName','searchName','active','updatedAt'])
+        && m.memberId == id && directoryId(id)
+        && m.accountNumber is string && m.accountNumber.matches('^[0-9]{1,40}$')
+        && currentNumber(m.uniqueNumber)
         && m.fullName is string && m.fullName.size() > 0 && m.fullName.size() <= 120
         && m.searchName == m.fullName.lower()
         && m.active is bool && m.updatedAt == request.time
@@ -149,9 +153,10 @@ service cloud.firestore {
     }
     match /members/{id} {
       allow read: if active() && (role('admin') || resource.data.active == true);
-      allow create: if role('admin') && id.matches('^LCT[0-9]{1,37}$') && validMember(request.resource.data, id);
+      allow create: if role('admin') && id == 'acct_' + request.resource.data.accountNumber && validMember(request.resource.data, id);
       allow update: if role('admin') && validMember(request.resource.data, id)
-        && (!resource.data.accountNumber.matches('^LCT.*') || request.resource.data.accountNumber == resource.data.accountNumber);
+        && (!('uniqueNumber' in resource.data) || request.resource.data.uniqueNumber == resource.data.uniqueNumber)
+        && (request.resource.data.accountNumber == resource.data.accountNumber || (!('uniqueNumber' in resource.data) && currentNumber(resource.data.accountNumber) && request.resource.data.uniqueNumber == resource.data.accountNumber));
       allow delete: if false;
     }
     match /accountNumbers/{number} {

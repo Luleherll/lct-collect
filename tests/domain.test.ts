@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Timestamp } from 'firebase/firestore';
 import {
   amount,
   bounds,
@@ -8,6 +9,7 @@ import {
   workday,
 } from '../src/lib/domain';
 import { csvRows, planImport } from '../src/lib/import';
+import { groupAccounts, isDirectoryNumber } from '../src/lib/account';
 import type { Member } from '../src/lib/models';
 describe('Uganda workday', () => {
   it.each([
@@ -76,127 +78,139 @@ describe('member identity', () => {
     expect(() => usernameEmail('real@example.com')).toThrow();
   });
 });
-describe('Ssentezo directory import', () => {
-  const header =
-    'Account Id,Account Number,Unique Number,Account Name,Amount\r\n';
-  it('imports name and LCT unique number only, preserving zeros and ignoring old columns', () => {
-    const p = planImport(
-      '\uFEFF' + header + '0137,0000137,LCT002,"Example, Person",999\r\n',
+describe('member and account directory import', () => {
+  const header = 'Account Id,Account Number,Unique Number,Account Name\n';
+  it('keeps each account while grouping matching member numbers', () => {
+    const plan = planImport(
+      header +
+        '1,000101,LCT002,Example\n2,000202,LCT002,Example\n3,000303,ABC 2,Example group',
       [],
     );
-    expect(p.errors).toEqual([]);
-    expect(p.rows).toEqual([
+    expect(plan.errors).toEqual([]);
+    expect(plan.rows).toHaveLength(3);
+    expect(plan.memberCount).toBe(2);
+    expect(plan.rows[0]).toMatchObject({
+      memberId: 'acct_000101',
+      accountNumber: '000101',
+      uniqueNumber: 'LCT002',
+    });
+    const grouped = groupAccounts(
+      plan.rows.map((r) => ({
+        ...r,
+        active: true,
+        searchName: r.fullName.toLowerCase(),
+        updatedAt: Timestamp.fromMillis(0),
+      })) as Member[],
+    );
+    expect(
+      grouped.find((g) => g.uniqueNumber === 'LCT002')?.accounts,
+    ).toHaveLength(2);
+    expect(grouped.find((g) => g.uniqueNumber === 'ABC 2')?.group).toBe(true);
+  });
+  it('preserves existing record identities, inactive state and historical account numbers', () => {
+    const existing = [
       {
-        memberId: 'LCT002',
-        accountNumber: 'LCT002',
-        fullName: 'Example, Person',
-        action: 'Add',
+        memberId: '0137',
+        accountNumber: '000101',
+        fullName: 'Old',
+        active: false,
       },
-    ]);
-    expect(planImport('Unique Number,Account Name\nLCT002,A', []).rows).toEqual(
-      [
-        {
-          memberId: 'LCT002',
-          accountNumber: 'LCT002',
-          fullName: 'A',
-          action: 'Add',
-        },
-      ],
-    );
-  });
-  it('matches existing accounts by LCT number and ignores misleading legacy columns', () => {
-    const existing = [
-      { memberId: 'old-key', accountNumber: 'LCT002', fullName: 'Old' },
-      { memberId: 'other', accountNumber: 'LCT003', fullName: 'Other' },
     ] as Member[];
-    const p = planImport(header + 'other,ignored,LCT002,Updated,', existing);
-    expect(p.errors).toEqual([]);
-    expect(p.rows[0]).toMatchObject({
-      memberId: 'old-key',
-      accountNumber: 'LCT002',
-      action: 'Update',
-    });
-    expect(existing).toHaveLength(2);
-  });
-  it('links a legacy record once, preserving identity and permitting name changes', () => {
-    const existing = [
-      { memberId: '0137', accountNumber: '0000137', fullName: 'Old' },
-    ] as Member[];
-    const p = planImport(header + '0137,IGNORED,LCT002,New name,', existing);
-    expect(p.errors).toEqual([]);
-    expect(p.rows[0]).toMatchObject({
+    const plan = planImport(header + '999,000101,LCT002,Updated', existing);
+    expect(plan.errors).toEqual([]);
+    expect(plan.rows[0]).toMatchObject({
       memberId: '0137',
-      accountNumber: 'LCT002',
-      fullName: 'New name',
+      accountNumber: '000101',
+      uniqueNumber: 'LCT002',
       action: 'Update',
     });
-    expect(p.rows[0].previous?.accountNumber).toBe('0000137');
+    expect(existing[0].active).toBe(false);
   });
-  it('does not guess legacy links by name or map two LCT numbers to one legacy record', () => {
+  it('restores records affected by the earlier member-as-account interpretation using the original ID', () => {
     const existing = [
-      { memberId: '137', accountNumber: '137', fullName: 'Same name' },
+      {
+        memberId: '137',
+        accountNumber: 'LCT002',
+        fullName: 'Name',
+        active: true,
+      },
     ] as Member[];
+    const plan = planImport(header + '137,000101,LCT002,Name', existing);
+    expect(plan.errors).toEqual([]);
+    expect(plan.rows[0].memberId).toBe('137');
     expect(
-      planImport('Unique Number,Account Name\nLCT002,Same name', existing)
-        .errors,
-    ).not.toEqual([]);
-    expect(
-      planImport(header + '137,x,LCT002,A,\n137,y,LCT003,B,', existing).errors,
+      planImport(header + '137,000101,LCT003,Name', existing).errors,
     ).not.toEqual([]);
   });
-  it('rejects conflicting relinks while a legacy transition is only partially complete', () => {
-    const existing = [
-      { memberId: '1', accountNumber: 'LCT002', fullName: 'A' },
-      { memberId: '2', accountNumber: '002', fullName: 'B' },
-    ] as Member[];
-    expect(
-      planImport(header + '1,ignored,LCT003,A,', existing).errors,
-    ).not.toEqual([]);
-    const resumed = planImport(
-      header + '1,ignored,LCT002,A,\n2,ignored,LCT003,B,',
-      existing,
+  it('skips only identical account rows and rejects conflicting account or member names', () => {
+    const same = planImport(
+      header + '1,001,LCT002,Name\n1,001,LCT002,Name',
+      [],
     );
-    expect(resumed.errors).toEqual([]);
-    expect(resumed.rows.map((r) => r.action)).toEqual(['Unchanged', 'Update']);
-    expect(resumed.rows.map((r) => r.memberId)).toEqual(['1', '2']);
-  });
-  it('rejects duplicate unique numbers and malformed identifiers', () => {
+    expect(same.errors).toEqual([]);
+    expect(same.rows).toHaveLength(1);
+    expect(same.duplicatesSkipped).toBe(1);
     expect(
-      planImport(header + '1,1,LCT002,A,\n2,2,LCT002,B,', []).errors,
+      planImport(header + '1,001,LCT002,A\n1,001,LCT003,B', []).errors,
     ).not.toEqual([]);
-    for (const number of [
-      '002',
-      'lct002',
-      'LCT',
-      'LCT/002',
-      'LCT2.0',
+    expect(
+      planImport(header + '1,001,LCT002,A\n2,002,LCT002,B', []).errors,
+    ).not.toEqual([]);
+  });
+  it('supports ABC formatting and searches all accounts under the matched member', () => {
+    expect(isDirectoryNumber('ABC 2')).toBe(true);
+    expect(isDirectoryNumber('ABC411')).toBe(true);
+    for (const code of [
+      'abc2',
+      'ABC',
+      'ABC  2',
+      'ABC/2',
       'LCT' + '0'.repeat(38),
     ])
-      expect(
-        planImport(`Unique Number,Account Name\n${number},A`, []).errors,
-      ).not.toEqual([]);
+      expect(isDirectoryNumber(code)).toBe(false);
+    const accounts = [
+      {
+        memberId: '1',
+        accountNumber: '001',
+        uniqueNumber: 'ABC 2',
+        fullName: 'Group',
+        active: true,
+      },
+      {
+        memberId: '2',
+        accountNumber: '002',
+        uniqueNumber: 'ABC 2',
+        fullName: 'Group',
+        active: true,
+      },
+    ] as Member[];
+    expect(groupAccounts(accounts, 'abc2')[0].accounts).toHaveLength(2);
+    expect(groupAccounts(accounts, '002')[0].accounts).toHaveLength(2);
   });
-  it('permits distinct LCT accounts with the same name', () => {
+  it('keeps same-name people with different member numbers separate and does not reassign an account', () => {
+    const p = planImport(header + '1,001,LCT002,Same\n2,002,LCT003,Same', []);
+    expect(p.memberCount).toBe(2);
     expect(
-      planImport(
-        'Unique Number,Account Name\nLCT002,Same name\nLCT003,Same name',
-        [],
-      ).errors,
-    ).toEqual([]);
-  });
-  it('does not match an existing document key to a different LCT account', () => {
-    expect(
-      planImport('Unique Number,Account Name\nLCT002,A', [
-        { memberId: 'LCT002', accountNumber: 'LCT003', fullName: 'B' },
+      planImport(header + '1,001,LCT003,Same', [
+        {
+          memberId: '1',
+          accountNumber: '001',
+          uniqueNumber: 'LCT002',
+          fullName: 'Same',
+        },
       ] as Member[]).errors,
     ).not.toEqual([]);
   });
-  it('supports embedded newlines and escaped quotes', () =>
-    expect(csvRows('A,B\n"a\nb","x""y"')[1]).toEqual(['a\nb', 'x"y']));
-  it('rejects malformed files and missing columns', () => {
+  it('supports CSV quoting, BOM and rejects missing or malformed identities', () => {
+    expect(csvRows('A,B\n"a\nb","x""y"')[1]).toEqual(['a\nb', 'x"y']);
     expect(() => csvRows('"oops')).toThrow();
     expect(() =>
-      planImport('Account Id,Account Number,Account Name\n1,2,A', []),
-    ).toThrow('Unique Number');
+      planImport('Unique Number,Account Name\nLCT002,A', []),
+    ).toThrow('Account Number');
+    expect(planImport(header + '1,1e9,LCT002,A', []).errors).not.toEqual([]);
+    expect(
+      planImport('\uFEFF' + header + '1,001,LCT002,"Person, Example"', [])
+        .rows[0].fullName,
+    ).toBe('Person, Example');
   });
 });

@@ -87,7 +87,8 @@ export async function saveEntry(
     if (
       !m?.active ||
       m.fullName !== member.fullName ||
-      m.accountNumber !== member.accountNumber
+      m.accountNumber !== member.accountNumber ||
+      m.uniqueNumber !== member.uniqueNumber
     )
       throw new Error('This account changed. Select it again before saving.');
     const totalDeposits = s.totalDeposits + values.deposit,
@@ -123,6 +124,7 @@ export async function saveEntry(
       agentNameSnapshot: profile.displayName,
       memberId: m.memberId,
       accountNumberSnapshot: m.accountNumber,
+      ...(m.uniqueNumber ? { uniqueNumberSnapshot: m.uniqueNumber } : {}),
       memberNameSnapshot: m.fullName,
       createdAt: serverTimestamp(),
       financialRevision: revision,

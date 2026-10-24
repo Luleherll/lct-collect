@@ -1,3 +1,4 @@
+import { accountSearchKey, matchesAccount } from './account';
 export const MAX_AMOUNT = 100_000_000;
 export const MAX_TOTAL = 9_000_000_000_000;
 export const MAX_RECORDING_EVENTS = 40;
@@ -66,6 +67,7 @@ export function searchMembers<
   T extends {
     memberId: string;
     accountNumber: string;
+    uniqueNumber?: string;
     fullName: string;
     active: boolean;
   },
@@ -73,7 +75,7 @@ export function searchMembers<
   const q = term.trim().toLowerCase();
   if (!q) return [];
   const rank = (m: T) =>
-    m.accountNumber.toLowerCase() === q
+    accountSearchKey(m.accountNumber) === accountSearchKey(q)
       ? 0
       : m.fullName.toLowerCase().startsWith(q)
         ? 1
@@ -82,7 +84,7 @@ export function searchMembers<
     .filter(
       (m) =>
         m.active &&
-        `${m.fullName} ${m.accountNumber}`.toLowerCase().includes(q),
+        matchesAccount(m.fullName, m.accountNumber, q, m.uniqueNumber),
     )
     .sort((a, b) => rank(a) - rank(b) || a.fullName.localeCompare(b.fullName))
     .slice(0, 8);

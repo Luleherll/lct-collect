@@ -7,9 +7,11 @@ export interface Profile {
   active: boolean;
   createdAt: Timestamp;
 }
+/** One Ssentezo account; several accounts can share a member/group number. */
 export interface Member {
   memberId: string;
   accountNumber: string;
+  uniqueNumber?: string;
   fullName: string;
   searchName: string;
   active: boolean;
@@ -63,6 +65,7 @@ export interface Entry {
   agentNameSnapshot: string;
   memberId: string;
   accountNumberSnapshot: string;
+  uniqueNumberSnapshot?: string;
   memberNameSnapshot: string;
   createdAt: Timestamp;
   financialRevision: number;

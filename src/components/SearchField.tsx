@@ -22,7 +22,7 @@ export default function SearchField({
         ref={ref}
         id={id}
         aria-label={label}
-        placeholder="Search name or LCT account number"
+        placeholder="Search name, member or account number"
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}

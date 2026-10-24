@@ -44,6 +44,7 @@ export async function applyDirectory(
       memberId: m.memberId,
       accountNumber: m.accountNumber,
       fullName: m.fullName,
+      uniqueNumber: m.uniqueNumber ?? '',
       action: 'Unchanged' as const,
       previous: {
         accountNumber: m.accountNumber,
@@ -94,6 +95,7 @@ export async function applyDirectory(
                 memberId: r.memberId,
                 accountNumber: r.accountNumber,
                 fullName: r.fullName,
+                uniqueNumber: r.uniqueNumber,
                 searchName: r.fullName.toLowerCase(),
                 active: current?.active ?? true,
                 updatedAt: serverTimestamp(),

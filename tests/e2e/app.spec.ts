@@ -10,13 +10,8 @@ async function login(page: Page, role = 'agent') {
   await page.waitForURL(role === 'agent' ? '**/agent/' : `**/${role}/`);
 }
 async function select(page: Page, id = '003') {
-  await page.getByLabel('Search members', { exact: true }).fill(id);
-  await page
-    .locator('.suggestions button')
-    .filter({
-      hasText: id === '007' ? 'deliberately long' : `Account no. LCT${id}`,
-    })
-    .click();
+  await page.getByLabel('Search members', { exact: true }).fill(`LCT${id}`);
+  await page.locator('.account-choice').first().click();
 }
 async function noOverflow(page: Page) {
   expect(
@@ -49,10 +44,10 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await page.locator('#deposit').fill('21,007');
   await page.locator('#withdrawal').focus();
   await expect(page.locator('#deposit-error')).toHaveCount(0);
-  await page.getByLabel('Search members', { exact: true }).fill('004');
+  await page.getByLabel('Search members', { exact: true }).fill('LCT004');
   await page
-    .locator('.suggestions button')
-    .filter({ hasText: 'LCT004' })
+    .locator('.account-choice')
+    .filter({ hasText: '000401001004' })
     .click();
   await expect(page.getByRole('dialog')).toContainText('Change member');
   await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
@@ -97,10 +92,10 @@ test('member change discards amounts only after confirmation and long inputs ref
       .locator('#deposit')
       .evaluate((el) => el.scrollWidth <= el.clientWidth),
   ).toBe(true);
-  await page.getByLabel('Search members', { exact: true }).fill('004');
+  await page.getByLabel('Search members', { exact: true }).fill('LCT004');
   await page
-    .locator('.suggestions button')
-    .filter({ hasText: 'LCT004' })
+    .locator('.account-choice')
+    .filter({ hasText: '000401001004' })
     .click();
   await page.getByRole('button', { name: 'Discard & change member' }).click();
   await expect(page.locator('#deposit')).toHaveValue('');
@@ -143,7 +138,7 @@ test('viewer records and undoes through the real audited operations', async ({
   });
 });
 
-test('owner imports LCT numbers, preserves existing identities and ignores old export columns', async ({
+test('owner imports separate accounts under member/group numbers and preserves identities', async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -152,17 +147,20 @@ test('owner imports LCT numbers, preserves existing identities and ignores old e
     name: 'update.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
-      'Account Id,Account Number,Unique Number,Account Name\n006,ignored,LCT006,Updated Example Six\n9001,ignored,LCT9001,New Example Account\n',
+      'Account Id,Account Number,Unique Number,Account Name\n006,000401001006,LCT006,Updated Example Six\n008,000401001008,LCT006,Updated Example Six\n9001,009001,LCT9001,New Example Account\n9002,009002,ABC 2,Example Group\n',
     ),
   });
   await expect(
     page.getByRole('heading', { name: 'Review import' }),
   ).toBeVisible();
-  await expect(page.locator('del')).toContainText('Example Member 6');
+  await expect(page.locator('del').first()).toContainText('Example Member 6');
   await page.getByRole('button', { name: 'Apply updates' }).click();
   await expect(
     page.getByText('Member directory updated.', { exact: true }),
   ).toBeVisible({ timeout: 100_000 });
+  await page.getByLabel('Search directory', { exact: true }).fill('ABC2');
+  await expect(page.locator('.directory-list .group-chip')).toHaveText('Group');
+  await expect(page.locator('.directory-list .member-account')).toHaveCount(2);
   await page.getByLabel('Search directory', { exact: true }).fill('9001');
   await expect(page.locator('.directory-list')).toContainText(
     'New Example Account',
@@ -171,7 +169,7 @@ test('owner imports LCT numbers, preserves existing identities and ignores old e
     name: 'collision.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
-      'Account Id,Account Number,Unique Number,Account Name\n9002,ignored,LCT9001,Reviewed name change\n',
+      'Account Id,Account Number,Unique Number,Account Name\n9002,009001,LCT9001,Reviewed name change\n',
     ),
   });
   await expect(
@@ -274,7 +272,9 @@ test('a changed member invalidates an older import preview', async ({
   const csv = (name: string) => ({
     name: 'change.csv',
     mimeType: 'text/csv',
-    buffer: Buffer.from(`Unique Number,Account Name\nLCT006,${name}\n`),
+    buffer: Buffer.from(
+      `Account Number,Unique Number,Account Name\n000401001006,LCT006,${name}\n000401001008,LCT006,${name}\n`,
+    ),
   });
   await page
     .locator('input[type=file]')
@@ -409,7 +409,7 @@ test('directory paginates beyond fifty accounts and search resets its page', asy
   page,
 }) => {
   await login(page, 'admin');
-  await expect(page.locator('.directory-list > div')).toHaveCount(50);
+  await expect(page.locator('.directory-list .member-result')).toHaveCount(50);
   await page.screenshot({
     path: join(evidence, 'compact-directory-mobile.png'),
     fullPage: false,
@@ -462,4 +462,57 @@ test('automatic record cache survives reload while the database is unavailable',
   await expect(
     page.getByRole('status').filter({ hasText: 'saved records' }),
   ).toBeVisible();
+});
+
+test('member search expands distinct accounts and ABC groups have a Group chip', async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByLabel('Search members', { exact: true }).fill('LCT006');
+  await expect(page.locator('.member-result')).toHaveCount(1);
+  await expect(page.locator('.member-result .account-choice')).toHaveCount(2);
+  await page
+    .getByRole('button', {
+      name: 'Select account 000401001008 for Newer reviewed name',
+      exact: true,
+    })
+    .click();
+  await expect(page.locator('.entry-card .account')).toContainText(
+    '000401001008',
+  );
+  await expect(page.locator('.entry-card .account')).toContainText('LCT006');
+  await page.locator('#deposit').fill('33008');
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('000401001008');
+  await expect(page.getByRole('dialog')).toContainText('LCT006');
+  await page.getByRole('button', { name: 'Confirm & save' }).click();
+  await expect(
+    page.getByRole('status', { name: 'Saved entry receipt' }),
+  ).toContainText('000401001008');
+  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  const saved = page
+    .locator('.entry-row')
+    .filter({ hasText: '33,008' })
+    .first();
+  await expect(saved).toContainText('000401001008');
+  await page.getByRole('link', { name: 'Back to collection' }).click();
+  await page.getByLabel('Search members', { exact: true }).fill('ABC2');
+  await expect(page.locator('.find-card .group-chip')).toHaveText('Group');
+  await expect(page.locator('.find-card .account-choice')).toHaveCount(2);
+  const summary = page.locator('.find-card summary');
+  await summary.focus();
+  await summary.press('Space');
+  await expect(page.locator('.find-card details')).toHaveJSProperty(
+    'open',
+    false,
+  );
+  await summary.press('Enter');
+  await expect(page.locator('.find-card details')).toHaveJSProperty(
+    'open',
+    true,
+  );
+  await page.screenshot({
+    path: join(evidence, 'group-member-accounts-mobile.png'),
+    fullPage: false,
+  });
 });

@@ -1,10 +1,11 @@
+import { groupAccounts } from '../lib/account';
+import MemberResults from './MemberResults';
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Member } from '../lib/models';
 import type { ImportPlan } from '../lib/import';
 import { applyDirectory, previewDirectory } from '../lib/directory';
 import { message } from '../lib/errors';
-import { Account } from './Account';
 import SearchField from './SearchField';
 import Icon from './Icon';
 export default function MemberAdmin({
@@ -47,11 +48,8 @@ export default function MemberAdmin({
       if (request === serial.current) setReading(false);
     }
   }
-  const matches = members.filter((m) =>
-    `${m.fullName} ${m.accountNumber}`
-      .toLowerCase()
-      .includes(q.toLowerCase().trim()),
-  );
+  const groups = groupAccounts(members);
+  const matches = groupAccounts(members, q);
   const pageCount = Math.max(1, Math.ceil(matches.length / 50));
   const currentPage = Math.min(page, pageCount);
   function changePage(next: number) {
@@ -95,18 +93,19 @@ export default function MemberAdmin({
         <section className="card">
           <h2>Review import</h2>
           <p className="muted">
-            {name} · Uses Account Name and Unique Number as the LCT account
-            number.
+            {name} · Unique Number identifies the member or group. Account
+            Number identifies each separate Ssentezo account.
           </p>
-          {plan.rows.some(
-            (r) => r.previous && !r.previous.accountNumber.startsWith('LCT'),
-          ) && (
-            <p className="alert">
-              Existing accounts will be linked to their LCT numbers. Saved
-              entries keep their original details; no accounts are deleted.
+          <p className="muted">
+            {plan.memberCount} members/groups · {plan.rows.length} accounts. All
+            separate accounts are retained.
+          </p>
+          {!!plan.duplicatesSkipped && (
+            <p role="status">
+              {plan.duplicatesSkipped} exact duplicate account rows skipped; the
+              first copy is kept.
             </p>
           )}
-
           <div className="import-counts">
             {(['Add', 'Update', 'Unchanged'] as const).map((a) => (
               <span key={a}>
@@ -138,6 +137,7 @@ export default function MemberAdmin({
               <caption className="sr-only">Preview of account changes</caption>
               <thead>
                 <tr>
+                  <th>Member / group</th>
                   <th>Account number</th>
                   <th>Name</th>
                   <th>Change</th>
@@ -146,6 +146,12 @@ export default function MemberAdmin({
               <tbody>
                 {plan.rows.slice(0, 30).map((r) => (
                   <tr key={r.memberId}>
+                    <td>
+                      {r.uniqueNumber}{' '}
+                      {r.uniqueNumber.startsWith('ABC') && (
+                        <span className="group-chip">Group</span>
+                      )}
+                    </td>
                     <td>{r.accountNumber}</td>
                     <td>
                       {r.previous && r.previous.fullName !== r.fullName && (
@@ -204,7 +210,8 @@ export default function MemberAdmin({
             Member directory
           </h1>
           <span className="muted">
-            {members.length} {cached ? 'saved ' : ''}accounts
+            {groups.length} {cached ? 'saved ' : ''}members/groups ·{' '}
+            {members.length} accounts
           </span>
         </div>
         <SearchField
@@ -216,12 +223,10 @@ export default function MemberAdmin({
           }}
         />
         <div className="directory-list">
-          {matches.slice((currentPage - 1) * 50, currentPage * 50).map((m) => (
-            <div key={m.memberId}>
-              <Account name={m.fullName} number={m.accountNumber} />
-              {!m.active && <span className="status">Inactive</span>}
-            </div>
-          ))}
+          <MemberResults
+            groups={matches.slice((currentPage - 1) * 50, currentPage * 50)}
+            searching={!!q.trim()}
+          />
         </div>
         <nav className="pagination" aria-label="Directory pages">
           <button
@@ -247,7 +252,8 @@ export default function MemberAdmin({
         </nav>
         {!matches.length && (
           <p className="muted">
-            No matching accounts. Try a different name or LCT account number.
+            No matching accounts. Try a different name, member/group number or
+            account number.
           </p>
         )}
       </section>

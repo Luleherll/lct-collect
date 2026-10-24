@@ -1,3 +1,4 @@
+import { matchesAccount, groupAccounts } from '../lib/account';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import {
@@ -19,7 +20,6 @@ import {
   amount,
   dayLabel,
   money,
-  searchMembers,
   timeLabel,
   dateTimeLabel,
   workday,
@@ -44,6 +44,7 @@ import {
 } from '../lib/operations';
 
 import Icon from './Icon';
+import MemberResults from './MemberResults';
 import Modal from './Modal';
 import { Account, Status } from './Account';
 import { useRecords } from '../hooks/useRecords';
@@ -62,6 +63,7 @@ type Receipt = Pick<
   | 'accountNumberSnapshot'
   | 'agentNameSnapshot'
   | 'workday'
+  | 'uniqueNumberSnapshot'
 > & {
   createdAt?: Entry['createdAt'];
   lines: Partial<Record<LineType, { amount: number }>>;
@@ -501,6 +503,9 @@ export default function App({ route: initialRoute }: { route: string }) {
         memberId: member.memberId,
         memberNameSnapshot: member.fullName,
         accountNumberSnapshot: member.accountNumber,
+        ...(member.uniqueNumber
+          ? { uniqueNumberSnapshot: member.uniqueNumber }
+          : {}),
         agentNameSnapshot: profile.displayName,
         workday: session.workday,
         lines: savedLines,
@@ -562,9 +567,12 @@ export default function App({ route: initialRoute }: { route: string }) {
           ? r.line.recorded
           : r.line.state === 'active' && !r.line.recorded)) &&
       (agent === 'all' || r.entry.agentId === agent) &&
-      `${r.entry.memberNameSnapshot} ${r.entry.accountNumberSnapshot}`
-        .toLowerCase()
-        .includes(q.toLowerCase().trim()),
+      matchesAccount(
+        r.entry.memberNameSnapshot,
+        r.entry.accountNumberSnapshot,
+        q,
+        r.entry.uniqueNumberSnapshot,
+      ),
   );
   const agents = Array.from(
     new Map(
@@ -865,6 +873,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             <div>
               <strong>Saved · {receipt.memberNameSnapshot}</strong>
               <span>
+                Account {receipt.accountNumberSnapshot} ·{' '}
                 {TYPES.filter((t) => receipt.lines[t])
                   .map(
                     (t) =>
@@ -969,50 +978,47 @@ export default function App({ route: initialRoute }: { route: string }) {
                     disabled={uncertain || busy}
                   />
                   {memberQuery.trim() && (
-                    <ul className="suggestions" aria-label="Matching accounts">
-                      {searchMembers(members.data, memberQuery).map((m) => (
-                        <li key={m.memberId}>
-                          <button
-                            disabled={busy || uncertain}
-                            onClick={() => {
-                              const select = () => {
-                                if (member?.memberId !== m.memberId) {
-                                  setValues({ ...EMPTY_AMOUNTS });
-                                  setFieldErrors({});
-                                  pendingId.current = '';
-                                }
-                                setMember(m);
-                                setMemberQuery('');
-                              };
-                              if (member?.memberId === m.memberId) {
-                                setMemberQuery('');
-                                depositRef.current?.focus();
-                              } else
-                                protect(
-                                  select,
-                                  'Change member account?',
-                                  'Changing accounts discards the amounts entered for the current member. No money has been saved.',
-                                  'Discard & change member',
-                                );
-                            }}
-                          >
-                            <Account
-                              name={m.fullName}
-                              number={m.accountNumber}
-                            />
-                            <Icon name="chevron-right" />
-                          </button>
-                        </li>
-                      ))}
-                      {!searchMembers(members.data, memberQuery).length && (
-                        <li className="no-match">
+                    <>
+                      <MemberResults
+                        groups={groupAccounts(
+                          members.data,
+                          memberQuery,
+                          true,
+                        ).slice(0, 8)}
+                        searching
+                        disabled={uncertain || busy}
+                        onSelect={(m) => {
+                          const select = () => {
+                            if (member?.memberId !== m.memberId) {
+                              setValues({ ...EMPTY_AMOUNTS });
+                              setFieldErrors({});
+                              pendingId.current = '';
+                            }
+                            setMember(m);
+                            setMemberQuery('');
+                          };
+                          if (member?.memberId === m.memberId) {
+                            setMemberQuery('');
+                            depositRef.current?.focus();
+                          } else
+                            protect(
+                              select,
+                              'Change member account?',
+                              'Changing accounts discards the amounts entered for the current account. No money has been saved.',
+                              'Discard & change member',
+                            );
+                        }}
+                      />
+                      {!groupAccounts(members.data, memberQuery, true)
+                        .length && (
+                        <p className="no-match">
                           Member not found.
                           {members.cached
                             ? ' Connect to refresh the directory.'
                             : ''}
-                        </li>
+                        </p>
                       )}
-                    </ul>
+                    </>
                   )}
                 </section>
                 <section className="card entry-card">
@@ -1021,6 +1027,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                     <Account
                       name={member.fullName}
                       number={member.accountNumber}
+                      memberNumber={member.uniqueNumber}
                     />
                   ) : (
                     <p className="muted">
@@ -1381,7 +1388,11 @@ export default function App({ route: initialRoute }: { route: string }) {
       )}
       {modal === 'review' && member && (
         <Modal title="Review entry" onClose={() => !busy && setModal(null)}>
-          <Account name={member.fullName} number={member.accountNumber} />
+          <Account
+            name={member.fullName}
+            number={member.accountNumber}
+            memberNumber={member.uniqueNumber}
+          />
           {error && (
             <p className="alert error" role="alert">
               {error}
@@ -1438,6 +1449,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           <Account
             name={detailRow.entry.memberNameSnapshot}
             number={detailRow.entry.accountNumberSnapshot}
+            memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <p>
             {LABELS[detailRow.type]} · UGX {money(detailRow.line.amount)}
@@ -1486,6 +1498,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           <Account
             name={detailRow.entry.memberNameSnapshot}
             number={detailRow.entry.accountNumberSnapshot}
+            memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <div className="detail-amount">
             {LABELS[detailRow.type]}
