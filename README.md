@@ -28,7 +28,7 @@ cp .env.example .env
 npm run dev
 ```
 
-The provided public configuration selects **lct-collect-staging**. It does not grant administrative access. Enable Email/Password Authentication, create Firestore and deploy tested rules before using a real project. No production project has been configured.
+The default public configuration selects **lct-collect-staging**. The separate `.env.production.example` selects **lct-collect-prod**. Neither grants administrative access. Both projects have Firestore, tested rules/indexes and email/password sign-in configured. Production Hosting remains disabled pending the activation steps in [deployment setup](docs/DEPLOYMENT.md).
 
 ### Explore with fictional emulator data
 
