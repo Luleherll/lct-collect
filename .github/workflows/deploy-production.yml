@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   deploy:
-    # Keep production off until its separate Firebase project and identity exist.
+    # Enable only after the owner sets the repository-level production gate.
     if: github.repository == 'Luleherll/lct-collect' && github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
@@ -19,14 +19,7 @@ jobs:
       cancel-in-progress: false
     env:
       PUBLIC_APP_ENV: production
-      PUBLIC_FIREBASE_API_KEY: ${{ vars.PUBLIC_FIREBASE_API_KEY }}
-      PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.PUBLIC_FIREBASE_AUTH_DOMAIN }}
-      PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.PUBLIC_FIREBASE_PROJECT_ID }}
-      PUBLIC_FIREBASE_APP_ID: ${{ vars.PUBLIC_FIREBASE_APP_ID }}
-      PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
-      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
-      FIREBASE_DEPLOY_SERVICE_ACCOUNT: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      FIREBASE_PROJECT_ID: lct-collect-prod
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,26 +27,29 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
           cache: npm
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
+      - name: Load public production configuration
+        run: cp .env.production.example .env
       - name: Verify environment separation
         run: |
-          node -e "const e=process.env,p=e.FIREBASE_PROJECT_ID;if(!p||p==='lct-collect-staging'||p.startsWith('demo-')||e.PUBLIC_FIREBASE_PROJECT_ID!==p||!e.FIREBASE_DEPLOY_SERVICE_ACCOUNT?.endsWith('@'+p+'.iam.gserviceaccount.com')||!e.GCP_WORKLOAD_IDENTITY_PROVIDER)process.exit(1)"
+          node scripts/check-env.mjs
+          node --env-file=.env -e "if(process.env.PUBLIC_FIREBASE_PROJECT_ID!==process.env.FIREBASE_PROJECT_ID)process.exit(1)"
       - run: npm ci
       - run: npm run check
       - run: npm run test:ci
       - run: npm run build
         env:
-          ASTRO_TELEMETRY_DISABLED: '1'
+          ASTRO_TELEMETRY_DISABLED: "1"
       - uses: google-github-actions/auth@v2
         with:
-          project_id: ${{ vars.FIREBASE_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: lct-collect-prod
+          workload_identity_provider: projects/275805072037/locations/global/workloadIdentityPools/lct-github-prod/providers/github
+          service_account: lct-github-prod@lct-collect-prod.iam.gserviceaccount.com
       - name: Deploy Firestore rules and indexes
         run: npx -y firebase-tools@latest deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
       - name: Deploy production live

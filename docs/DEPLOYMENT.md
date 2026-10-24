@@ -7,7 +7,7 @@
 - Email/password authentication is enabled. Application users/profiles are still provisioned manually; Google Cloud sign-in does not create an application account.
 - Preview: https://lct-collect-staging--staging-5osd9ys7.web.app
 - The preview expires on 23 November 2026 unless renewed. Every staging deployment renews it for 30 days.
-- Production has not been provisioned or deployed.
+- Production uses the separate project `lct-collect-prod`; its Hosting deployment remains disabled until the owner enables it.
 
 ## GitHub credentials
 
@@ -46,28 +46,35 @@ The workflow requests `id-token: write` only for its deployment job. Google auth
 
 The first federated deployment cannot be verified until the workflow runs from a trusted ref. An unmerged feature-branch run deliberately cannot impersonate the staging service account.
 
-## Production is separately gated
+## Production setup and activation
 
-Use a different Firebase project, database, Auth directory and deploy identity. Do not reuse the staging identity, provider or SDK config.
+Production is a separate Firebase project, `lct-collect-prod`, with its own Standard Firestore database in Johannesburg (`africa-south1`), email/password Auth directory, Web App and deploy identity. No real members or application accounts have been imported. Provision accounts using [ACCOUNT_SETUP.md](ACCOUNT_SETUP.md) before a pilot.
 
-After staging/pilot acceptance, create a `production` GitHub environment and configure these non-secret variables for that project's Web App and its separate workload identity:
+Its public Web App configuration is checked into `.env.production.example`. **Production also requires no GitHub secrets.** Its dedicated identity is:
 
 ```
-PUBLIC_FIREBASE_API_KEY
-PUBLIC_FIREBASE_AUTH_DOMAIN
-PUBLIC_FIREBASE_PROJECT_ID
-PUBLIC_FIREBASE_APP_ID
-PUBLIC_FIREBASE_MESSAGING_SENDER_ID
-FIREBASE_PROJECT_ID
-FIREBASE_DEPLOY_SERVICE_ACCOUNT
-GCP_WORKLOAD_IDENTITY_PROVIDER
+lct-github-prod@lct-collect-prod.iam.gserviceaccount.com
 ```
 
-Create a production-specific provider restricted to this repository, `refs/heads/main`, the `production` environment and `deploy-production.yml`, and grant only the needed roles in the production project. Verify its database location, backups and account setup separately. The location recorded in the current shared `firebase.json` was selected for staging; review the production location before provisioning its database.
+Provider:
 
-Set required deployment reviewers and restrict the production environment to `main`. **Only after that setup**, set the **repository-level** variable `PRODUCTION_DEPLOY_ENABLED` to `true`. Its absence disables the production job, including when workflow files first reach `main`. Environment-level variables are intentionally not used for this early job gate.
+```
+projects/275805072037/locations/global/workloadIdentityPools/lct-github-prod/providers/github
+```
 
-Production then deploys reviewed pushes to `main` to that project's `live` Hosting channel, with rules/indexes deployed first. `live` is a channel name, not a separate project. No production Firebase project or enabling variable has been configured by this setup.
+This identity has the same four deployment roles listed above, confined to the production project. Its provider accepts only repository ID `1424838142`, owner ID `36928255`, the `production` environment, `refs/heads/main`, and the exact `deploy-production.yml` workflow for push/manual events. It cannot be used by the staging workflow. No private key was created.
+
+After staging/pilot acceptance:
+
+1. In repository **Settings → Environments**, create `production`, restrict deployment branches to `main`, and set required reviewers if available for this repository/account. Protect `main` with reviews and required CI checks.
+2. Promote the reviewed application and workflow files from `develop` into `main`. Production remains disabled while the enabling variable is absent.
+3. In **Settings → Secrets and variables → Actions → Variables**, create a **repository variable** named `PRODUCTION_DEPLOY_ENABLED` with value `true`. This is a non-secret switch, not an environment-level variable. No other manually entered variables are required.
+4. Open **Actions → Deploy production → Run workflow**, select `main`, and start it. Setting the variable alone does not trigger a run. Later reviewed pushes to `main` deploy automatically.
+5. Check the authentication, rules/indexes and Hosting steps in that first run. The intended live URL is https://lct-collect-prod.web.app; no production Hosting release has been published during this setup.
+
+The connected GitHub credential cannot write repository variables or environment protection settings (GitHub returns 403). The owner must make the Settings changes above. No JSON secret needs to be uploaded. Remove the enabling variable or set it to `false` to disable subsequent production jobs.
+
+The first federated production deployment can only be verified after the workflow runs on trusted `main`. Build/static and emulator checks do not establish that the first cloud CI authentication has succeeded.
 
 ## Manual staging deployment
 

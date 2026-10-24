@@ -1,1 +1,6 @@
-{"projects":{"staging":"lct-collect-staging"}}
+{
+  "projects": {
+    "staging": "lct-collect-staging",
+    "production": "lct-collect-prod"
+  }
+}
