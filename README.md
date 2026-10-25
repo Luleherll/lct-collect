@@ -1,2 +1,89 @@
-# lct-collect
-Collections app for LCT
+# LCT Collect
+
+Mobile-first field collection log for Lusaze Community Traders SACCO. Astro static pages, React, TypeScript, Firebase Authentication and Firestore. No Cloud Functions, custom API, analytics, payments integration or offline write queue.
+
+## Current scope
+
+- Username/password sign-in with manually provisioned agent, viewer and owner (`admin`) profiles.
+- Agent opening cash, one session per Uganda operational day (02:00–02:00), member account search, grouped deposits/withdrawals/loan instalments, review, idempotent save and eligible per-line voids.
+- Latest five own workdays and a separate recent entries page; the viewer can select any date. Transaction lists show at most 50 lines per cursor page.
+- Office date register with composable search/type/agent/status filters, independent recording checks and audited undo.
+- Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Search results expand to show the member’s accounts, and agents select one before entering amounts.
+- Automatic offline-viewing record cache and a static-only service worker; all application writes use online transactions.
+- Emulator security tests and isolated staging/production workflow definitions.
+
+## Staging preview
+
+https://lct-collect-staging--staging-5osd9ys7.web.app
+
+Staging uses Standard Firestore in Johannesburg. See [deployment setup](docs/DEPLOYMENT.md) for keyless GitHub auto-deploy activation and [account setup](docs/ACCOUNT_SETUP.md) for manually provisioning application access.
+
+## Local development
+
+Node 22+ and Java 21 are required. Java is used only by the Firestore emulator.
+
+```sh
+npm ci
+cp .env.example .env
+npm run dev
+```
+
+The default public configuration selects **lct-collect-staging**. The separate `.env.production.example` selects **lct-collect-prod**. Neither grants administrative access. Both projects have Firestore, tested rules/indexes and email/password sign-in configured. Production Hosting remains disabled pending the activation steps in [deployment setup](docs/DEPLOYMENT.md).
+
+### Explore with fictional emulator data
+
+In three terminals:
+
+```sh
+# Terminal 1
+npm run emulators
+
+# Terminal 2, once emulators are ready
+npm run seed:emulators
+
+# Terminal 3
+npm run dev:emulators
+```
+
+Open the URL Astro prints. Local-only accounts: `demo.agent`, `demo.viewer`, `demo.admin`; password `CollectDemo123!`. The seed script accepts only loopback emulator hosts and the `demo-lct-collect` project. It never writes to staging or production. Re-running it keeps an existing demo session.
+
+### Checks
+
+```sh
+npm run check
+npm run test
+npm run test:rules
+npx playwright install chromium
+npm run test:e2e
+npm run build
+```
+
+`npm run test:ci` runs unit and emulator security suites. Tests cannot select the real Firebase project. The service worker is generated at build time and precaches only emitted static app resources; Firestore requests are excluded.
+
+## Accounts and owner imports
+
+Follow [account setup](docs/ACCOUNT_SETUP.md). Creating an Authentication user alone is insufficient: a matching active `users/{uid}` document assigns access. User/profile writes are never available from the web app. The owner imports members at `/admin/`; it does not create Authentication users. Agents and viewers cannot import. Owner accounts cannot read financial records unless separately given an appropriate financial account.
+
+Import the full **CSV** export supplied by Ssentezo; native `.xlsx` files must first be exported to CSV. Keep **Account Name**, **Unique Number** and **Account Number**. LCT identifiers represent members; ABC identifiers represent groups, with prefix spacing and leading zeros preserved (for example `ABC 2`). Each real numeric Account Number remains separate. Identical member names with the same Unique Number can have several accounts; these are grouped, never discarded. Only exact duplicate account rows are skipped, retaining the first copy. Conflicting names or ownership are flagged for review. Existing omitted accounts and inactive states remain unchanged.
+
+Existing documents match by real Account Number, retaining their internal ID and history. If a record was previously changed to use its LCT identifier as its account number, include **Account Id** from the original export once: the app verifies that bridge and restores its real account number while adding the separate member identifier. New records use `acct_<accountNumber>` document IDs. Entry snapshots keep the selected account number and validated member/group number; old snapshots remain untouched. Agents see active accounts only; owner results include inactive accounts with a label. ABC results have a Group chip. Neither import nor grouping deactivates or deletes any account for sharing a member identifier.
+
+Imports reserve account numbers and run in five-account online transaction chunks. Existing reservations are reused; the first import prepares reservations for older directory records. Account numbers remain assigned to their original internal identity and cannot be moved between IDs in a bulk upload. A changed record invalidates its preview instead of being overwritten. A file is not one 820-row atomic operation. If connectivity fails partway through, some chunks may have committed; re-upload the same file and review remaining additions/updates. Only changed rows are written.
+
+## Important protocol details
+
+- One entry stores up to three lines. Session aggregates and entry changes must commit together, linked by `lastMutationId` and the entry's `financialRevision`.
+- Viewer changes preserve `financialRevision`, amounts, identity and session totals. Audit events use a bounded revision-keyed map so each event can receive a server timestamp and older events cannot be rewritten.
+- Recording history allows 40 transitions per line. Further changes stop with an owner escalation message. Migrate audit storage before changing that limit; never truncate old events.
+- Opening cash and each line currently have a UGX **100,000,000** cap, with separately bounded aggregates. Confirm this operating limit before a live pilot; change both client constants and rules together.
+- Failed/uncertain saves retain the submission ID, including across refreshes. Site storage must be available before a financial save is sent. Read-only sign-in can fall back to memory; sign-in normally lasts for the browser session. Draft account changes and navigation require an explicit discard decision. No financial form payload is saved as an offline queue. Reconnect and check the same ID before retrying. A restored ID does not restore its form inputs.
+- Security rules validate the data and atomic relationships; they cannot establish which SDK method a modified client used. The official app exclusively uses `runTransaction()` for writes.
+- Cash is a field estimate, not a member savings balance or withdrawal entitlement. Corrections discovered after expiry/recording require SACCO office escalation; there is no historical edit workflow.
+
+## Deployment and release status
+
+See [deployment](docs/DEPLOYMENT.md), [recovery](docs/RECOVERY.md), [pilot checklist](docs/PILOT.md), and [design verification](design-qa.md). The supplied screenshot is the main-screen target; navy/green styling carries through all routes.
+
+Do not treat a successful build or emulator run as field acceptance. Browser visual QA, real small-Android checks, staging account verification, and the notebook-parallel pilot are release gates. No Firebase deployment credentials, real member exports or production records belong in this repository.
+
+The mobile refinement and review fixes are tracked in [review resolution](docs/REVIEW_RESOLUTION.md). Visual and interaction contracts are maintained in [DESIGN.md](DESIGN.md) and [UX-CONTRACT.md](UX-CONTRACT.md). Browser tests use 820 synthetic accounts against local emulators only.
