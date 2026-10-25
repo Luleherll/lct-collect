@@ -11,7 +11,7 @@ async function login(page: Page, role = 'agent') {
 }
 async function select(page: Page, id = '003') {
   await page.getByLabel('Search members', { exact: true }).fill(`LCT${id}`);
-  await page.locator('.account-choice').first().click();
+  await page.locator('.single-account').first().click();
 }
 async function noOverflow(page: Page) {
   expect(
@@ -46,7 +46,7 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await expect(page.locator('#deposit-error')).toHaveCount(0);
   await page.getByLabel('Search members', { exact: true }).fill('LCT004');
   await page
-    .locator('.account-choice')
+    .locator('.single-account')
     .filter({ hasText: '000401001004' })
     .click();
   await expect(page.getByRole('dialog')).toContainText('Change member');
@@ -94,7 +94,7 @@ test('member change discards amounts only after confirmation and long inputs ref
   ).toBe(true);
   await page.getByLabel('Search members', { exact: true }).fill('LCT004');
   await page
-    .locator('.account-choice')
+    .locator('.single-account')
     .filter({ hasText: '000401001004' })
     .click();
   await page.getByRole('button', { name: 'Discard & change member' }).click();
@@ -113,14 +113,39 @@ test('viewer records and undoes through the real audited operations', async ({
   page,
 }) => {
   await login(page, 'viewer');
+  await expect(
+    page.getByRole('link', { name: 'Register', exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('combobox', { name: 'Status', exact: true })
+    .selectOption('all');
+  await page.route(/documents:commit|Firestore\/Commit/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
   const row = page
     .locator('.entry-row')
     .filter({ hasText: 'Loan instalment' })
     .first();
+  const idleWidth = await row
+    .getByRole('button', { name: 'Mark recorded' })
+    .evaluate((el) => el.getBoundingClientRect().width);
   await row.getByRole('button', { name: 'Mark recorded' }).click();
+  await expect(row.getByRole('button', { name: 'Recording…' })).toHaveAttribute(
+    'aria-busy',
+    'true',
+  );
+  await expect(row.getByRole('button', { name: 'Recording…' })).toBeDisabled();
+  expect(
+    await row
+      .getByRole('button', { name: 'Recording…' })
+      .evaluate((el) => el.getBoundingClientRect().width),
+  ).toBe(idleWidth);
   await expect(
     page.getByRole('button', { name: 'Undo recording check', exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('.receipt')).toHaveCount(0);
   await page
     .getByRole('button', { name: 'Undo recording check', exact: true })
     .click();
@@ -515,4 +540,102 @@ test('member search expands distinct accounts and ABC groups have a Group chip',
     path: join(evidence, 'group-member-accounts-mobile.png'),
     fullPage: false,
   });
+});
+
+test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages navigable', async ({
+  page,
+}) => {
+  // Admin SDK is deliberately restricted to local synthetic emulator fixtures.
+  process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
+  if (
+    !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(
+      process.env.FIRESTORE_EMULATOR_HOST,
+    )
+  )
+    throw new Error('Local emulator only');
+  const { initializeApp, deleteApp } = await import('firebase-admin/app');
+  const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
+  const fixtureApp = initializeApp(
+    { projectId: 'demo-lct-collect' },
+    'viewer-pagination',
+  );
+  const database = getFirestore(fixtureApp);
+  const sample = (
+    await database.collection('entries').limit(1).get()
+  ).docs[0].data();
+  const refs = Array.from({ length: 55 }, (_, i) =>
+    database.doc(`entries/pagination_fixture_${i}`),
+  );
+  try {
+    const batch = database.batch();
+    refs.forEach((ref, i) =>
+      batch.set(ref, {
+        ...sample,
+        entryId: ref.id,
+        workday: '2020-01-01',
+        memberNameSnapshot: `Page fixture ${i}`,
+        createdAt: Timestamp.fromMillis(1577836800000 + i * 1000),
+        lines: {
+          deposit: {
+            ...sample.lines.deposit,
+            recorded: false,
+            state: 'active',
+          },
+        },
+      }),
+    );
+    await batch.commit();
+    await login(page, 'viewer');
+    await page.getByLabel('Workday', { exact: true }).fill('2020-01-01');
+    await expect(page.locator('.register .entry-row')).toHaveCount(50);
+    await expect(page.locator('.register')).toContainText('Page fixture 54');
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.register .entry-row')).toHaveCount(5);
+    await expect(page.locator('.register')).toContainText('Page fixture 0');
+    await expect(page.locator('.register')).not.toContainText(
+      'Page fixture 54',
+    );
+    await expect(
+      page.getByRole('button', { name: 'Next', exact: true }),
+    ).toBeDisabled();
+    await page
+      .getByLabel('Search this page', { exact: true })
+      .fill('no such fixture');
+    await expect(
+      page.getByText('No matching entries', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Previous', exact: true }),
+    ).toBeEnabled();
+    await page.getByLabel('Clear search this page').click();
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await expect(page.locator('.register .entry-row')).toHaveCount(50);
+    await page.setViewportSize({ width: 320, height: 760 });
+    await expect(
+      page
+        .locator('.register .entry-row')
+        .first()
+        .getByRole('button', { name: 'Mark recorded' }),
+    ).toBeEnabled();
+    await noOverflow(page);
+    await page.screenshot({
+      path: join(evidence, 'compact-viewer-pagination-mobile.png'),
+      fullPage: false,
+    });
+    await page.getByLabel('Workday', { exact: true }).fill('2020-01-02');
+    await expect(
+      page.getByText('No matching entries', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Previous', exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole('button', { name: 'Next', exact: true }),
+    ).toBeDisabled();
+  } finally {
+    const cleanup = database.batch();
+    refs.forEach((ref) => cleanup.delete(ref));
+    await cleanup.commit();
+    await deleteApp(fixtureApp);
+  }
 });

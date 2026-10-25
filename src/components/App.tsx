@@ -47,6 +47,7 @@ import Icon from './Icon';
 import MemberResults from './MemberResults';
 import Modal from './Modal';
 import { Account, Status } from './Account';
+import { usePagedEntries } from '../hooks/usePagedEntries';
 import { useRecords } from '../hooks/useRecords';
 import { storage } from '../lib/storage';
 import { message } from '../lib/errors';
@@ -102,7 +103,8 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [q, setQ] = useState(''),
     [type, setType] = useState('all'),
     [status, setStatus] = useState(route === 'viewer' ? 'unrecorded' : 'all'),
-    [agent, setAgent] = useState('all');
+    [agent, setAgent] = useState('all'),
+    [agentLabel, setAgentLabel] = useState('');
   const [fieldErrors, setFieldErrors] = useState<
     Partial<Record<LineType, string>>
   >({});
@@ -114,6 +116,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   } | null>(null);
   const [openingValue, setOpeningValue] = useState('0');
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [markingRow, setMarkingRow] = useState('');
   const [undoRow, setUndoRow] = useState<Row | null>(null);
   const [historyCount, setHistoryCount] = useState(20);
   const dirty = TYPES.some((t) => values[t].trim() !== '');
@@ -248,7 +251,10 @@ export default function App({ route: initialRoute }: { route: string }) {
   }, [receipt]);
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(''), 6000);
+    const timer = window.setTimeout(() => {
+      setNotice('');
+      setUndoRow(null);
+    }, 6000);
     return () => clearTimeout(timer);
   }, [notice]);
   const authorized = !!user && !!profile?.active;
@@ -346,30 +352,38 @@ export default function App({ route: initialRoute }: { route: string }) {
   const sessions = useRecords<Session>(
     'sessions',
     [
-      where('agentId', '==', user?.uid ?? ''),
-      ...(route === 'history'
-        ? [orderBy('workday', 'desc'), limit(historyCount)]
-        : [where('workday', '==', today)]),
+      ...(isViewer ? [] : [where('agentId', '==', user?.uid ?? '')]),
+      ...(isViewer
+        ? [where('workday', '==', date)]
+        : route === 'history'
+          ? [orderBy('workday', 'desc'), limit(historyCount)]
+          : [where('workday', '==', today)]),
     ],
-    `${user?.uid}/${route === 'history' ? historyCount : 'current'}/${today}`,
-    authorized && isAgent,
+    `${user?.uid}/${isViewer ? date : route === 'history' ? historyCount : 'current'}/${today}`,
+    authorized && (isAgent || isViewer),
   );
   const entryDay = route === 'history' ? historyDay : isViewer ? date : today;
   const constraints: QueryConstraint[] = [
     ...(isAgent ? [where('agentId', '==', user?.uid ?? '')] : []),
     ...(entryDay ? [where('workday', '==', entryDay)] : []),
   ];
-  const entries = useRecords<Entry>(
+  const regularEntries = useRecords<Entry>(
     'entries',
     constraints,
     `${user?.uid}/${entryDay}`,
-    authorized && !isAdmin && !!entryDay,
+    authorized && isAgent && !!entryDay,
   );
+  const pagedEntries = usePagedEntries(
+    date,
+    user?.uid ?? '',
+    authorized && isViewer,
+  );
+  const entries = isViewer ? pagedEntries : regularEntries;
   const session = sessions.data.find((s) => s.workday === today);
   const cached = isAdmin
     ? members.cached
     : isViewer
-      ? entries.cached
+      ? entries.cached || sessions.cached
       : members.cached || sessions.cached || (!!entryDay && entries.cached);
   const writable = network && !cached && !busy;
   useEffect(() => {
@@ -388,6 +402,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setBusy(true);
     setError('');
     setNotice('');
+    setUndoRow(null);
     try {
       await fn();
       setNotice(success);
@@ -557,7 +572,6 @@ export default function App({ route: initialRoute }: { route: string }) {
         r.type === selectedRow.type,
     );
   const detailRow = liveSelected ?? selectedRow;
-  const validRows = allRows.filter((r) => r.line.state === 'active');
   const filtered = allRows.filter(
     (r) =>
       (!isViewer || r.line.state === 'active') &&
@@ -579,12 +593,19 @@ export default function App({ route: initialRoute }: { route: string }) {
       entries.data.map((e) => [e.agentId, e.agentNameSnapshot]),
     ).entries(),
   );
+  if (agent !== 'all' && !agents.some(([id]) => id === agent))
+    agents.push([agent, agentLabel]);
   function Filters({ viewer = false }: { viewer?: boolean }) {
     // Defined outside the JSX call below so input state stays in the page component.
     return (
       <>
         <div className="filter-grid">
-          <SearchField value={q} onChange={setQ} label="Search entries" />
+          <SearchField
+            value={q}
+            onChange={setQ}
+            label={viewer ? 'Search this page' : 'Search entries'}
+            placeholder={viewer ? 'Search this page' : undefined}
+          />
           <label>
             Status
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -595,8 +616,27 @@ export default function App({ route: initialRoute }: { route: string }) {
           </label>
           {viewer && (
             <label>
+              Type
+              <select value={type} onChange={(e) => setType(e.target.value)}>
+                <option value="all">All types</option>
+                {TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {LABELS[t]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {viewer && (agents.length > 1 || agent !== 'all') && (
+            <label>
               Agent
-              <select value={agent} onChange={(e) => setAgent(e.target.value)}>
+              <select
+                value={agent}
+                onChange={(e) => {
+                  setAgent(e.target.value);
+                  setAgentLabel(e.target.selectedOptions[0].text);
+                }}
+              >
                 <option value="all">All agents</option>
                 {agents.map(([id, name]) => (
                   <option key={id} value={id}>
@@ -607,18 +647,20 @@ export default function App({ route: initialRoute }: { route: string }) {
             </label>
           )}
         </div>
-        <div className="chips" aria-label="Transaction type">
-          {['all', ...TYPES].map((t) => (
-            <button
-              key={t}
-              className={type === t ? 'chip selected' : 'chip'}
-              aria-pressed={type === t}
-              onClick={() => setType(t)}
-            >
-              {t === 'all' ? 'All' : LABELS[t as LineType]}
-            </button>
-          ))}
-        </div>
+        {!viewer && (
+          <div className="chips" aria-label="Transaction type">
+            {['all', ...TYPES].map((t) => (
+              <button
+                key={t}
+                className={type === t ? 'chip selected' : 'chip'}
+                aria-pressed={type === t}
+                onClick={() => setType(t)}
+              >
+                {t === 'all' ? 'All' : LABELS[t as LineType]}
+              </button>
+            ))}
+          </div>
+        )}
       </>
     );
   }
@@ -634,7 +676,9 @@ export default function App({ route: initialRoute }: { route: string }) {
           <p>
             {cached
               ? 'Saved data may be incomplete. Connect to load this workday.'
-              : 'Try another search, date or status filter.'}
+              : viewer
+                ? 'Try another page, date or filter.'
+                : 'Try another search, date or status filter.'}
           </p>
         </div>
       );
@@ -658,13 +702,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               <strong>{row.entry.memberNameSnapshot}</strong>
               <span>{row.entry.accountNumberSnapshot}</span>
               <span>
-                {timeLabel(row.entry.createdAt)}
-                {!viewer && (
-                  <>
-                    {' '}
-                    · <Status row={row} />
-                  </>
-                )}
+                {timeLabel(row.entry.createdAt)} · <Status row={row} />
               </span>
             </button>
             <div className="entry-kind">
@@ -679,11 +717,13 @@ export default function App({ route: initialRoute }: { route: string }) {
                   row.line.recorded ? 'button outline small' : 'button small'
                 }
                 disabled={!writable}
+                aria-busy={markingRow === `${row.entry.entryId}:${row.type}`}
                 onClick={() => {
                   if (row.line.recorded) {
                     setSelectedRow(row);
                     setModal('undo');
-                  } else
+                  } else {
+                    setMarkingRow(`${row.entry.entryId}:${row.type}`);
                     void action(
                       async () => {
                         await setRecorded(
@@ -696,13 +736,25 @@ export default function App({ route: initialRoute }: { route: string }) {
                         setUndoRow(row);
                       },
                       `Recorded: ${row.entry.memberNameSnapshot} · ${LABELS[row.type]} · UGX ${money(row.line.amount)}.`,
-                    );
+                    ).finally(() => setMarkingRow(''));
+                  }
                 }}
               >
-                <Icon
-                  name={row.line.recorded ? 'arrow-counterclockwise' : 'check2'}
-                />
-                {row.line.recorded ? 'Undo' : 'Mark recorded'}
+                {markingRow === `${row.entry.entryId}:${row.type}` ? (
+                  <>
+                    <span className="button-spinner" aria-hidden="true" />
+                    Recording…
+                  </>
+                ) : (
+                  <>
+                    <Icon
+                      name={
+                        row.line.recorded ? 'arrow-counterclockwise' : 'check2'
+                      }
+                    />
+                    {row.line.recorded ? 'Undo' : 'Mark recorded'}
+                  </>
+                )}
               </button>
             ) : (
               <button
@@ -785,12 +837,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               </>
             ) : isAdmin ? (
               <div id="owner-header-actions" />
-            ) : (
-              <a href={HOME[profile.role]}>
-                <Icon name={isViewer ? 'list-ul' : 'people'} />
-                <span>{isViewer ? 'Register' : 'Members'}</span>
-              </a>
-            )}
+            ) : null}
           </nav>
         </div>
       </header>
@@ -835,34 +882,33 @@ export default function App({ route: initialRoute }: { route: string }) {
           >
             <Icon name="check2" />
             <div>{notice}</div>
+            {undoRow && isViewer && (
+              <button
+                className="text-button"
+                disabled={!writable}
+                onClick={() => {
+                  setSelectedRow(undoRow);
+                  setModal('undo');
+                  setUndoRow(null);
+                }}
+                aria-label="Undo recording check"
+              >
+                Undo
+              </button>
+            )}
             <button
               className="icon-button"
               aria-label="Dismiss update"
-              onClick={() => setNotice('')}
+              onClick={() => {
+                setNotice('');
+                setUndoRow(null);
+              }}
             >
               <Icon name="x-lg" />
             </button>
           </div>
         )}
-        {undoRow && (
-          <div className="receipt" role="status">
-            <p>
-              Last recorded: <strong>{undoRow.entry.memberNameSnapshot}</strong>{' '}
-              · {LABELS[undoRow.type]} · UGX {money(undoRow.line.amount)}
-            </p>
-            <button
-              className="button outline small"
-              disabled={!writable}
-              onClick={() => {
-                setSelectedRow(undoRow);
-                setModal('undo');
-                setUndoRow(null);
-              }}
-            >
-              Undo recording check
-            </button>
-          </div>
-        )}
+
         {receipt && (
           <div
             className="save-toast"
@@ -1250,54 +1296,81 @@ export default function App({ route: initialRoute }: { route: string }) {
         )}
         {isViewer && (
           <>
-            <div className="page-heading">
-              <h1>Ssentezo register</h1>
-              <p>Mark each line only after entering it in Ssentezo.</p>
+            <div className="viewer-heading">
+              <div>
+                <h1>Ssentezo register</h1>
+                <p>Mark after entering in Ssentezo.</p>
+              </div>
+              <label className="date-control">
+                Workday
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      setDate(e.target.value);
+                      setAgent('all');
+                      setQ('');
+                    }
+                  }}
+                />
+              </label>
             </div>
-            <label className="date-control">
-              Operational date
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => {
-                  if (e.target.value) setDate(e.target.value);
-                }}
-              />
-            </label>
-            <p className="summary-caption">
-              {cached
-                ? 'Saved totals — may be incomplete'
-                : 'Workday totals · all valid lines'}
-            </p>
-            <div className="totals">
-              {TYPES.map((t) => (
-                <div key={t}>
-                  <span>{LABELS[t]}s</span>
-                  <strong>
-                    <small>UGX </small>
-                    {money(
-                      validRows
-                        .filter((r) => r.type === t)
-                        .reduce((sum, r) => sum + r.line.amount, 0),
-                    )}
-                  </strong>
-                </div>
-              ))}
-            </div>
-            <div className="register-counts">
+            <details className="viewer-totals">
+              <summary>
+                Workday totals{sessions.cached ? ' · saved data' : ''}
+              </summary>
+              <div className="totals">
+                {TYPES.map((t) => (
+                  <div key={t}>
+                    <span>{LABELS[t]}s</span>
+                    <strong>
+                      <small>UGX </small>
+                      {money(
+                        sessions.data.reduce(
+                          (sum, session) =>
+                            sum +
+                            session[
+                              t === 'deposit'
+                                ? 'totalDeposits'
+                                : t === 'withdrawal'
+                                  ? 'totalWithdrawals'
+                                  : 'totalLoanInstalments'
+                            ],
+                          0,
+                        ),
+                      )}
+                    </strong>
+                  </div>
+                ))}
+              </div>
+            </details>
+            <div className="viewer-filters">{Filters({ viewer: true })}</div>
+            <div className="viewer-page-info">
               <span>
-                {validRows.filter((r) => !r.line.recorded).length} unrecorded
+                {filtered.length} lines match on this page
+                {cached ? ' · saved records' : ''}
               </span>
-              <span>
-                {validRows.filter((r) => r.line.recorded).length} recorded
-              </span>
+              <span>50 entries per page</span>
             </div>
-            {Filters({ viewer: true })}
-            <p className="muted">
-              {filtered.length} matching lines
-              {cached ? ' · saved records only' : ''}
-            </p>
             {rowsView(filtered, true)}
+            <nav className="pagination" aria-label="Register pages">
+              <button
+                className="button outline small"
+                disabled={busy || entries.loading || pagedEntries.page === 0}
+                onClick={pagedEntries.previous}
+              >
+                Previous
+              </button>
+              <span aria-live="polite">Page {pagedEntries.page + 1}</span>
+              <button
+                className="button outline small"
+                disabled={busy || entries.loading || !pagedEntries.hasNext}
+                onClick={pagedEntries.next}
+              >
+                Next
+              </button>
+            </nav>
           </>
         )}
         {isAdmin && (
@@ -1488,7 +1561,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                 )
               }
             >
-              Undo check
+              {busy ? 'Undoing…' : 'Undo check'}
             </button>
           </div>
         </Modal>

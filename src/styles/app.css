@@ -15,7 +15,7 @@
 }
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 0;
 }
 button,
 input,
@@ -2082,4 +2082,211 @@ footer {
 .member-result > summary:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* Office work surface: the register, rather than its controls, owns the space. */
+.member-result.single-account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  color: var(--navy);
+  background: white;
+}
+.member-result.single-account:hover:not(:disabled) {
+  background: var(--pale);
+}
+.member-result.single-account .member-result-identity {
+  min-width: 0;
+}
+.member-result.single-account .member-result-identity span {
+  overflow-wrap: anywhere;
+}
+.viewer-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+.viewer-heading h1 {
+  font-size: 21px;
+  margin: 0;
+}
+.viewer-heading p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+.viewer-heading .date-control {
+  flex: 0 0 150px;
+  gap: 2px;
+  font-size: 12px;
+}
+.viewer-heading input {
+  min-height: 44px;
+  padding: 7px;
+  font-size: 16px;
+}
+.viewer-totals > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--green);
+  font-size: 13px;
+}
+.viewer-totals > summary::before {
+  content: '+';
+  font-size: 18px;
+}
+.viewer-totals[open] > summary::before {
+  content: '−';
+}
+.viewer-totals .totals {
+  margin-bottom: 8px;
+}
+.viewer-totals .totals > div {
+  padding: 10px;
+}
+.viewer-totals .totals strong {
+  font-size: 20px;
+}
+.viewer-totals .totals span {
+  margin-bottom: 4px;
+}
+.viewer-filters .filter-grid {
+  gap: 6px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.viewer-filters .filter-grid > .search-field {
+  grid-column: 1 / -1;
+}
+.viewer-filters .filter-grid label {
+  gap: 2px;
+}
+.viewer-filters .filter-grid input,
+.viewer-filters .filter-grid select {
+  min-height: 44px;
+  padding: 8px;
+  font-size: 16px;
+}
+.viewer-filters .filter-grid > label:nth-child(4) {
+  grid-column: 1 / -1;
+}
+.viewer-page-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0;
+}
+.viewer-page .register .entry-row {
+  padding: 8px 0;
+  gap: 2px 10px;
+}
+.viewer-page .register .entry-identity {
+  gap: 1px;
+  min-height: 44px;
+}
+.viewer-page .register .entry-identity strong {
+  font-size: 15px;
+}
+.viewer-page .register .entry-kind small {
+  margin-top: 1px;
+}
+.viewer-page .register .button {
+  min-width: 148px;
+  width: 148px;
+  min-height: 44px;
+  padding: 8px;
+  gap: 6px;
+  white-space: nowrap;
+}
+.button-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: button-spin 0.8s linear infinite;
+}
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 759px) {
+  .viewer-page .register .entry-identity {
+    grid-row: 1 / 3;
+  }
+  .viewer-page .register .entry-kind {
+    grid-row: 3;
+    grid-column: 1;
+    text-align: left;
+    font-size: 12px;
+  }
+  .viewer-page .register .entry-kind small {
+    display: inline;
+    margin-left: 6px;
+  }
+  .viewer-page .register .row-money {
+    grid-row: 1;
+  }
+  .viewer-page .register > .entry-row > .status {
+    display: none;
+  }
+  .viewer-page .register .button {
+    grid-row: 2 / 4;
+  }
+  .viewer-page .register .entry-identity span:last-child {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+}
+@media (min-width: 760px) {
+  .viewer-page .viewer-filters .filter-grid {
+    grid-template-columns: minmax(0, 1fr) 160px 160px;
+  }
+  .viewer-page .viewer-filters .filter-grid:has(label:nth-child(4)) {
+    grid-template-columns: minmax(0, 1fr) 160px 160px 175px;
+  }
+  .viewer-filters .filter-grid > label:nth-child(4),
+  .viewer-filters .filter-grid > .search-field {
+    grid-column: auto;
+  }
+  .viewer-page .register-head,
+  .viewer-page .register .entry-row {
+    grid-template-columns: minmax(0, 2fr) minmax(100px, 1fr) 140px 100px 148px;
+  }
+}
+@media (max-width: 360px) {
+  .viewer-heading {
+    flex-wrap: wrap;
+  }
+  .viewer-heading .date-control {
+    flex: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button-spinner {
+    animation: none;
+  }
+}
+
+.viewer-page .register .entry-identity > span:last-child {
+  font-size: 12px;
+}
+.viewer-page .register .entry-identity .status {
+  font-size: 11px;
+  padding: 3px 5px;
+  line-height: 1.2;
 }

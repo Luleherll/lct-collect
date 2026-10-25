@@ -6,12 +6,14 @@ export default function SearchField({
   label,
   id,
   disabled = false,
+  placeholder = 'Search name, member or account number',
 }: {
   value: string;
   onChange: (value: string) => void;
   label: string;
   id?: string;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   return (
@@ -22,7 +24,7 @@ export default function SearchField({
         ref={ref}
         id={id}
         aria-label={label}
-        placeholder="Search name, member or account number"
+        placeholder={placeholder}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
