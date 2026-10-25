@@ -12,9 +12,11 @@ Mobile-first field collection log for Lusaze Community Traders SACCO. Astro stat
 - Automatic offline-viewing record cache and a static-only service worker; all application writes use online transactions.
 - Emulator security tests and isolated staging/production workflow definitions.
 
-## Staging preview
+## Staging
 
-https://lct-collect-staging--staging-5osd9ys7.web.app
+https://lct-collect-staging.web.app
+
+Merges and pushes to `develop` deploy to this permanent staging site. Preview channels are separate temporary review URLs.
 
 Staging uses Standard Firestore in Johannesburg. See [deployment setup](docs/DEPLOYMENT.md) for keyless GitHub auto-deploy activation and [account setup](docs/ACCOUNT_SETUP.md) for manually provisioning application access.
 

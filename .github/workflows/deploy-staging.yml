@@ -3,8 +3,6 @@ on:
   push:
     branches: [develop]
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 1,15 * *'
 permissions:
   contents: read
 jobs:
@@ -54,5 +52,5 @@ jobs:
           service_account: lct-github-staging@lct-collect-staging.iam.gserviceaccount.com
       - name: Deploy Firestore rules and indexes
         run: npx -y firebase-tools@15.34.1 deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
-      - name: Deploy staging preview and renew expiry
-        run: npx -y firebase-tools@15.34.1 hosting:channel:deploy staging --project "$FIREBASE_PROJECT_ID" --expires 30d --no-authorized-domains --non-interactive
+      - name: Deploy permanent staging site
+        run: npx -y firebase-tools@15.34.1 deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive
