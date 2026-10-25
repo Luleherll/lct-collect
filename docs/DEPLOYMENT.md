@@ -7,7 +7,7 @@
 - Email/password authentication is enabled. Application users/profiles are still provisioned manually; Google Cloud sign-in does not create an application account.
 - Permanent staging: https://lct-collect-staging.web.app (also https://lct-collect-staging.firebaseapp.com).
 - Pushes/merges to `develop` publish the staging project’s live Hosting channel. This URL does not expire. Temporary preview channels are separate and are not updated by this workflow.
-- Production uses the separate project `lct-collect-prod`; its Hosting deployment remains disabled until the owner enables it.
+- Production uses the separate project `lct-collect-prod`; a reviewed merge/push to `main` is its release trigger.
 
 ## GitHub credentials
 
@@ -66,15 +66,27 @@ This identity has the same four deployment roles listed above, confined to the p
 
 After staging/pilot acceptance:
 
-1. In repository **Settings → Environments**, create `production`, restrict deployment branches to `main`, and set required reviewers if available for this repository/account. Protect `main` with reviews and required CI checks.
-2. Promote the reviewed application and workflow files from `develop` into `main`. Production remains disabled while the enabling variable is absent.
-3. In **Settings → Secrets and variables → Actions → Variables**, create a **repository variable** named `PRODUCTION_DEPLOY_ENABLED` with value `true`. This is a non-secret switch, not an environment-level variable. No other manually entered variables are required.
-4. Open **Actions → Deploy production → Run workflow**, select `main`, and start it. Setting the variable alone does not trigger a run. Later reviewed pushes to `main` deploy automatically.
-5. Check the authentication, rules/indexes and Hosting steps in that first run. The intended live URL is https://lct-collect-prod.web.app; no production Hosting release has been published during this setup.
+1. In repository **Settings → Environments**, restrict `production` deployments to `main`, and set required reviewers if appropriate. Protect `main` with reviews and required CI checks.
+2. Merge the reviewed application and workflow files into `main`. Every push to `main` deploys Firestore rules/indexes and the permanent production site at https://lct-collect-prod.web.app (also https://lct-collect-prod.firebaseapp.com).
+3. Check authentication, rules/indexes and Hosting steps in the first run. An explicit manual run on `main` can redeploy that selected source commit.
 
-The connected GitHub credential cannot write repository variables or environment protection settings (GitHub returns 403). The owner must make the Settings changes above. No JSON secret needs to be uploaded. Remove the enabling variable or set it to `false` to disable subsequent production jobs.
+No production enabling variable or GitHub deployment secret is required. The previous `PRODUCTION_DEPLOY_ENABLED` switch is no longer read; the reviewed merge to `main` is the release decision. Repository environment protection settings still apply. The connected GitHub credential cannot edit those protection settings, so the owner manages them in Settings. This configuration change does not deploy production or merge application code into `main`.
 
 The first federated production deployment can only be verified after the workflow runs on trusted `main`. Build/static and emulator checks do not establish that the first cloud CI authentication has succeeded.
+
+## PR previews
+
+| Event                                      | Destination                                    | Backend/configuration                          |
+| ------------------------------------------ | ---------------------------------------------- | ---------------------------------------------- |
+| Push/merge to `develop`                    | https://lct-collect-staging.web.app            | Staging rules, indexes and Hosting             |
+| Push/merge to `main`                       | https://lct-collect-prod.web.app               | Production rules, indexes and Hosting          |
+| Same-repository PR targeting either branch | One temporary `pr-<number>` channel URL per PR | Staging web configuration, static Hosting only |
+
+CI builds PR code in the normal unprivileged `pull_request` workflow, then uploads its static output. The trusted `pull_request_target` publisher never checks out or executes PR code. It waits for that exact PR/head SHA to pass CI, downloads only that CI run's artifact, uses the trusted base commit's publishing script and Hosting configuration, and updates one bot comment with the preview URL. Stale/closed PRs are skipped; new commits replace the same channel. Preview content expires seven days after its last deployment. Fork PRs receive CI checks but no credentialed preview deployment.
+
+The preview workflow/script must first be merged into the target branch (PR #2) before GitHub can run this trusted publisher on later PR events. The default branch does not need to receive the application just to enable previews targeting `develop`. No preview workflow deploys rules/indexes or changes the permanent sites. Views use staging data, not production data. Keep real accounts and sensitive records out of unreviewed previews.
+
+Preview identity: `lct-github-preview@lct-collect-staging.iam.gserviceaccount.com`, with only `roles/firebasehosting.admin` and `roles/serviceusage.serviceUsageConsumer` in staging. It has a separate identity pool, `lct-github-preview`, so its tokens cannot use the permanent-deployment service accounts' pool bindings. Its provider pins numeric repository/owner IDs, environment `preview`, event `pull_request_target`, the exact `deploy-preview.yml` path, and trusted `develop`/`main` refs. No private key is created. Hosting's admin role does not enforce a `pr-` channel prefix, so the trusted script restricts the destination to a validated `pr-N` channel; the preview workflow cannot run scripts from the PR artifact. The production provider also checks its environment claim directly to support immutable GitHub subjects.
 
 ## Manual staging deployment
 

@@ -7,8 +7,7 @@ permissions:
   contents: read
 jobs:
   deploy:
-    # Enable only after the owner sets the repository-level production gate.
-    if: github.repository == 'Luleherll/lct-collect' && github.ref == 'refs/heads/main' && vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    if: github.repository == 'Luleherll/lct-collect' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     permissions:

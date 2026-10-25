@@ -16,7 +16,7 @@ Mobile-first field collection log for Lusaze Community Traders SACCO. Astro stat
 
 https://lct-collect-staging.web.app
 
-Merges and pushes to `develop` deploy to this permanent staging site. Preview channels are separate temporary review URLs.
+Merges and pushes to `develop` deploy to this permanent staging site. Merges and pushes to `main` deploy to https://lct-collect-prod.web.app. Same-repository PRs get a separate temporary preview URL after CI passes; the bot updates its link as the PR changes.
 
 Staging uses Standard Firestore in Johannesburg. See [deployment setup](docs/DEPLOYMENT.md) for keyless GitHub auto-deploy activation and [account setup](docs/ACCOUNT_SETUP.md) for manually provisioning application access.
 
@@ -30,7 +30,7 @@ cp .env.example .env
 npm run dev
 ```
 
-The default public configuration selects **lct-collect-staging**. The separate `.env.production.example` selects **lct-collect-prod**. Neither grants administrative access. Both projects have Firestore, tested rules/indexes and email/password sign-in configured. Production Hosting remains disabled pending the activation steps in [deployment setup](docs/DEPLOYMENT.md).
+The default public configuration selects **lct-collect-staging**. The separate `.env.production.example` selects **lct-collect-prod**. Neither grants administrative access. Both projects have Firestore, tested rules/indexes and email/password sign-in configured. Production Hosting deploys when reviewed application/workflow changes reach `main`; see [deployment setup](docs/DEPLOYMENT.md).
 
 ### Explore with fictional emulator data
 

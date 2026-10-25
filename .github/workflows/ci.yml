@@ -27,6 +27,15 @@ jobs:
       - run: npm run build
         env:
           ASTRO_TELEMETRY_DISABLED: '1'
+      - name: Upload PR static preview
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-preview-${{ github.event.pull_request.number }}
+          overwrite: true
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
   browser:
     runs-on: ubuntu-latest
     steps:
