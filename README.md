@@ -6,7 +6,7 @@ Mobile-first field collection log for Lusaze Community Traders SACCO. Astro stat
 
 - Username/password sign-in with manually provisioned agent, viewer and owner (`admin`) profiles.
 - Agent opening cash, one session per Uganda operational day (02:00–02:00), member account search, grouped deposits/withdrawals/loan instalments, review, idempotent save and eligible per-line voids.
-- Own session history and a separate recent entries page.
+- Latest five own workdays and a separate recent entries page; the viewer can select any date. Transaction lists show at most 50 lines per cursor page.
 - Office date register with composable search/type/agent/status filters, independent recording checks and audited undo.
 - Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Search results expand to show the member’s accounts, and agents select one before entering amounts.
 - Automatic offline-viewing record cache and a static-only service worker; all application writes use online transactions.

@@ -1,6 +1,8 @@
 import type { Member } from '../lib/models';
 import type { MemberGroup } from '../lib/account';
 import Icon from './Icon';
+import Pagination from './Pagination';
+import { usePagination } from '../hooks/usePagination';
 export default function MemberResults({
   groups,
   onSelect,
@@ -54,32 +56,64 @@ export default function MemberResults({
               <Icon name="chevron-right" />
             </summary>
             <div className="member-accounts">
-              {g.accounts.map((a) => (
-                <div className="member-account" key={a.memberId}>
-                  {onSelect ? (
-                    <button
-                      disabled={disabled || !a.active}
-                      className="account-choice"
-                      onClick={() => onSelect(a)}
-                      aria-label={`Select account ${a.accountNumber} for ${g.fullName}`}
-                    >
-                      <span>
-                        Account no. <strong>{a.accountNumber}</strong>
-                      </span>
-                      <Icon name="chevron-right" />
-                    </button>
-                  ) : (
-                    <span>
-                      Account no. <strong>{a.accountNumber}</strong>
-                    </span>
-                  )}
-                  {!a.active && <span className="status">Inactive</span>}
-                </div>
-              ))}
+              <AccountChoices
+                group={g}
+                onSelect={onSelect}
+                disabled={disabled}
+              />
             </div>
           </details>
         ),
       )}
     </div>
+  );
+}
+
+function AccountChoices({
+  group,
+  onSelect,
+  disabled,
+}: {
+  group: MemberGroup;
+  onSelect?: (account: Member) => void;
+  disabled: boolean;
+}) {
+  const pages = usePagination(group.accounts, group.key);
+  return (
+    <>
+      {pages.items.map((a) => (
+        <div className="member-account" key={a.memberId}>
+          {onSelect ? (
+            <button
+              disabled={disabled || !a.active}
+              className="account-choice"
+              onClick={() => onSelect(a)}
+              aria-label={`Select account ${a.accountNumber} for ${group.fullName}`}
+            >
+              <span>
+                Account no. <strong>{a.accountNumber}</strong>
+              </span>
+              <Icon name="chevron-right" />
+            </button>
+          ) : (
+            <span>
+              Account no. <strong>{a.accountNumber}</strong>
+            </span>
+          )}
+          {!a.active && <span className="status">Inactive</span>}
+        </div>
+      ))}
+      {pages.pageCount > 1 && (
+        <Pagination
+          label={`Accounts for ${group.fullName}`}
+          page={pages.page}
+          pageCount={pages.pageCount}
+          summary={pages.summary}
+          onPrevious={pages.previous}
+          onNext={pages.next}
+          busy={disabled}
+        />
+      )}
+    </>
   );
 }

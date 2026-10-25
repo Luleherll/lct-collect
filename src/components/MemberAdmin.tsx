@@ -1,5 +1,7 @@
 import { groupAccounts } from '../lib/account';
 import MemberResults from './MemberResults';
+import Pagination from './Pagination';
+import { usePagination } from '../hooks/usePagination';
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Member } from '../lib/models';
@@ -26,8 +28,7 @@ export default function MemberAdmin({
     [error, setError] = useState(''),
     [reading, setReading] = useState(false),
     [progress, setProgress] = useState(''),
-    [q, setQ] = useState(''),
-    [page, setPage] = useState(1);
+    [q, setQ] = useState('');
   const serial = useRef(0);
   async function read(file?: File) {
     if (!file) return;
@@ -50,10 +51,11 @@ export default function MemberAdmin({
   }
   const groups = groupAccounts(members);
   const matches = groupAccounts(members, q);
-  const pageCount = Math.max(1, Math.ceil(matches.length / 50));
-  const currentPage = Math.min(page, pageCount);
-  function changePage(next: number) {
-    setPage(next);
+  const directory = usePagination(matches, q);
+  const preview = usePagination(plan?.rows ?? [], `${name}/${serial.current}`);
+  const issues = usePagination(plan?.errors ?? [], `${name}/${serial.current}`);
+  function changePage(run: () => void) {
+    run();
     requestAnimationFrame(() => {
       document
         .getElementById('directory-title')
@@ -120,15 +122,20 @@ export default function MemberAdmin({
             <div className="alert error" role="alert">
               <strong>Resolve these issues before importing:</strong>
               <ul>
-                {plan.errors.slice(0, 20).map((e, i) => (
+                {issues.items.map((e, i) => (
                   <li key={i}>{e}</li>
                 ))}
               </ul>
-              {plan.errors.length > 20 && (
-                <p>
-                  {plan.errors.length - 20} more issues. Correct the file and
-                  preview again.
-                </p>
+              {issues.pageCount > 1 && (
+                <Pagination
+                  label="Import issue pages"
+                  page={issues.page}
+                  pageCount={issues.pageCount}
+                  summary={issues.summary}
+                  onPrevious={issues.previous}
+                  onNext={issues.next}
+                  busy={busy}
+                />
               )}
             </div>
           )}
@@ -144,7 +151,7 @@ export default function MemberAdmin({
                 </tr>
               </thead>
               <tbody>
-                {plan.rows.slice(0, 30).map((r) => (
+                {preview.items.map((r) => (
                   <tr key={r.memberId}>
                     <td>
                       {r.uniqueNumber}{' '}
@@ -168,9 +175,16 @@ export default function MemberAdmin({
               </tbody>
             </table>
           </div>
-          {plan.rows.length > 30 && (
-            <p>Showing 30 of {plan.rows.length} validated accounts.</p>
-          )}
+          <Pagination
+            label="Import preview pages"
+            page={preview.page}
+            pageCount={preview.pageCount}
+            summary={preview.summary}
+            onPrevious={preview.previous}
+            onNext={preview.next}
+            busy={busy}
+          />
+
           <p className="muted">
             Changes are confirmed in small chunks. If an import stops, re-upload
             the same file to preview remaining changes.
@@ -219,37 +233,20 @@ export default function MemberAdmin({
           value={q}
           onChange={(value) => {
             setQ(value);
-            setPage(1);
           }}
         />
         <div className="directory-list">
-          <MemberResults
-            groups={matches.slice((currentPage - 1) * 50, currentPage * 50)}
-            searching={!!q.trim()}
-          />
+          <MemberResults groups={directory.items} searching={!!q.trim()} />
         </div>
-        <nav className="pagination" aria-label="Directory pages">
-          <button
-            className="button outline small"
-            disabled={currentPage === 1}
-            onClick={() => changePage(currentPage - 1)}
-          >
-            Previous
-          </button>
-          <span role="status">
-            {matches.length
-              ? `${(currentPage - 1) * 50 + 1}–${Math.min(currentPage * 50, matches.length)} of ${matches.length}`
-              : 'No matches'}{' '}
-            · Page {currentPage} of {pageCount}
-          </span>
-          <button
-            className="button outline small"
-            disabled={currentPage === pageCount}
-            onClick={() => changePage(currentPage + 1)}
-          >
-            Next
-          </button>
-        </nav>
+        <Pagination
+          label="Directory pages"
+          page={directory.page}
+          pageCount={directory.pageCount}
+          summary={directory.summary}
+          onPrevious={() => changePage(directory.previous)}
+          onNext={() => changePage(directory.next)}
+          busy={busy}
+        />
         {!matches.length && (
           <p className="muted">
             No matching accounts. Try a different name, member/group number or

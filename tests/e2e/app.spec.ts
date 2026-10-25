@@ -247,7 +247,7 @@ test('offline and operational rollover stop writes without replaying the draft',
     page.getByRole('button', { name: 'Review entry', exact: true }),
   ).toBeDisabled();
   await expect(
-    page.getByRole('status').filter({ hasText: 'Offline' }),
+    page.getByRole('status').filter({ hasText: /offline/i }),
   ).toBeVisible();
   await context.setOffline(false);
   await expect(
@@ -357,7 +357,7 @@ test('long identities reflow and collection, review, history and office share th
     .click();
   await page.getByRole('link', { name: 'History', exact: true }).click();
   await expect(
-    page.getByRole('heading', { name: 'Session history' }),
+    page.getByRole('heading', { name: 'Recent workdays' }),
   ).toBeVisible();
   await page.screenshot({
     path: join(evidence, 'after-history-desktop.png'),
@@ -440,7 +440,10 @@ test('directory paginates beyond fifty accounts and search resets its page', asy
     fullPage: false,
   });
   await expect(page.locator('.app-header input[type=file]')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page
+    .getByRole('navigation', { name: 'Directory pages' })
+    .getByRole('button', { name: 'Next', exact: true })
+    .click();
   await expect(
     page.getByRole('navigation', { name: 'Directory pages' }),
   ).toContainText('51–100');
@@ -480,12 +483,15 @@ test('automatic record cache survives reload while the database is unavailable',
   await expect(page.locator('.entry-row').first()).toBeVisible();
   await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
   await page.reload();
+  await expect(page.locator('.loading-overlay')).toBeVisible();
+  await expect(page.locator('.connection')).toHaveCount(0);
+  await expect(page.locator('.loading-overlay')).toBeHidden({ timeout: 12000 });
   await expect(
     page.getByRole('heading', { name: 'Recent entries', exact: true }),
   ).toBeVisible();
   await expect(page.locator('.entry-row').first()).toBeVisible();
   await expect(
-    page.getByRole('status').filter({ hasText: 'saved records' }),
+    page.getByRole('status').filter({ hasText: 'data may be outdated' }),
   ).toBeVisible();
 });
 
@@ -576,11 +582,12 @@ test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages n
         memberNameSnapshot: `Page fixture ${i}`,
         createdAt: Timestamp.fromMillis(1577836800000 + i * 1000),
         lines: {
-          deposit: {
-            ...sample.lines.deposit,
-            recorded: false,
-            state: 'active',
-          },
+          ...Object.fromEntries(
+            ['deposit', 'withdrawal', 'loanInstalment'].map((type) => [
+              type,
+              { ...sample.lines.deposit, recorded: false, state: 'active' },
+            ]),
+          ),
         },
       }),
     );
@@ -590,7 +597,11 @@ test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages n
     await expect(page.locator('.register .entry-row')).toHaveCount(50);
     await expect(page.locator('.register')).toContainText('Page fixture 54');
     await page.getByRole('button', { name: 'Next', exact: true }).click();
-    await expect(page.locator('.register .entry-row')).toHaveCount(5);
+    await expect(page.locator('.register .entry-row')).toHaveCount(50);
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.register .entry-row')).toHaveCount(50);
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.register .entry-row')).toHaveCount(15);
     await expect(page.locator('.register')).toContainText('Page fixture 0');
     await expect(page.locator('.register')).not.toContainText(
       'Page fixture 54',
@@ -610,6 +621,10 @@ test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages n
     await page.getByLabel('Clear search this page').click();
     await page.getByRole('button', { name: 'Previous', exact: true }).click();
     await expect(page.locator('.register .entry-row')).toHaveCount(50);
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await expect(page.locator('.register .entry-row')).toHaveCount(50);
+    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    await expect(page.locator('.register')).toContainText('Page fixture 54');
     await page.setViewportSize({ width: 320, height: 760 });
     await expect(
       page
@@ -638,4 +653,192 @@ test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages n
     await cleanup.commit();
     await deleteApp(fixtureApp);
   }
+});
+
+test('agent shows five compact workdays and pages every line without losing split entries', async ({
+  page,
+}) => {
+  process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
+  if (
+    !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(
+      process.env.FIRESTORE_EMULATOR_HOST,
+    )
+  )
+    throw new Error('Local emulator only');
+  const { initializeApp, deleteApp } = await import('firebase-admin/app');
+  const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
+  const fixtureApp = initializeApp(
+    { projectId: 'demo-lct-collect' },
+    'agent-history-pagination',
+  );
+  const database = getFirestore(fixtureApp);
+  const sample = (
+    await database.collection('entries').limit(1).get()
+  ).docs[0].data();
+  const templateSession = (
+    await database.doc(`sessions/${sample.sessionId}`).get()
+  ).data()!;
+  const sessionRefs = Array.from({ length: 7 }, (_, i) =>
+    database.doc(`sessions/agent_history_fixture_${i + 1}`),
+  );
+  const entryRefs = Array.from({ length: 55 }, (_, i) =>
+    database.doc(`entries/agent_history_fixture_${i}`),
+  );
+  try {
+    const batch = database.batch();
+    sessionRefs.forEach((ref, i) =>
+      batch.set(ref, {
+        ...templateSession,
+        sessionId: ref.id,
+        agentId: 'demo-agent',
+        workday: `2020-02-0${i + 1}`,
+      }),
+    );
+    entryRefs.forEach((ref, i) =>
+      batch.set(ref, {
+        ...sample,
+        entryId: ref.id,
+        sessionId: sessionRefs[6].id,
+        agentId: 'demo-agent',
+        workday: '2020-02-07',
+        memberNameSnapshot: `History fixture ${i}`,
+        createdAt: Timestamp.fromMillis(1581033600000 + i * 1000),
+        lines: Object.fromEntries(
+          ['deposit', 'withdrawal', 'loanInstalment'].map((type) => [
+            type,
+            { ...sample.lines.deposit, state: 'active', recorded: false },
+          ]),
+        ),
+      }),
+    );
+    await batch.commit();
+    await login(page);
+    const search = page.getByLabel('Search members', { exact: true });
+    await search.fill('Example Member');
+    await expect(page.locator('.find-card .member-result')).toHaveCount(50);
+    const memberPages = page.getByRole('navigation', {
+      name: 'Member search pages',
+    });
+    await memberPages
+      .getByRole('button', { name: 'Next', exact: true })
+      .click();
+    await expect(memberPages).toContainText('51–100');
+    await expect(page.locator('.find-card .member-result')).toHaveCount(50);
+    await page.getByLabel('Clear search members').click();
+    await page.getByRole('link', { name: 'History', exact: true }).click();
+    await expect(page.locator('.session-card')).toHaveCount(5);
+    await expect(page.locator('.session-list')).toContainText('7 Feb 2020');
+    await expect(page.locator('.session-list')).not.toContainText('3 Feb 2020');
+    await expect(
+      page.getByRole('button', { name: 'Load older sessions' }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: join(evidence, 'compact-five-workdays-mobile.png'),
+      fullPage: true,
+    });
+    await page
+      .locator('.session-card')
+      .filter({ hasText: '7 Feb 2020' })
+      .click();
+    await expect(page.locator('.entry-row')).toHaveCount(50);
+    const backBox = await page
+      .getByRole('link', { name: 'Back to collection', exact: true })
+      .boundingBox();
+    const allBox = await page
+      .getByRole('button', { name: 'All sessions', exact: true })
+      .boundingBox();
+    expect(Math.abs(backBox!.y - allBox!.y)).toBeLessThan(4);
+    expect(allBox!.x).toBeGreaterThan(backBox!.x);
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await expect(page.locator('.entry-row')).toHaveCount(i === 3 ? 15 : 50);
+      seen.push(
+        ...(await page
+          .locator('.entry-row')
+          .evaluateAll((rows) =>
+            rows.map(
+              (row) =>
+                `${row.querySelector('.entry-identity strong')!.textContent}:${row.querySelector('.entry-kind')!.textContent}`,
+            ),
+          )),
+      );
+      if (i < 3)
+        await page
+          .getByRole('navigation', { name: 'Workday entry pages' })
+          .getByRole('button', { name: 'Next', exact: true })
+          .click();
+    }
+    expect(seen).toHaveLength(165);
+    expect(new Set(seen).size).toBe(165);
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Workday entry pages' })
+        .getByRole('button', { name: 'Next', exact: true }),
+    ).toBeDisabled();
+    await page.locator('.entry-identity').first().click();
+    await expect(page.getByRole('dialog')).toContainText('read-only');
+    await expect(
+      page.getByRole('button', { name: 'Void this line', exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole('button', { name: 'Close dialog' }).click();
+    await page.setViewportSize({ width: 320, height: 760 });
+    await noOverflow(page);
+    await page.screenshot({
+      path: join(evidence, 'compact-workday-lines-mobile.png'),
+      fullPage: false,
+    });
+    await page
+      .getByRole('button', { name: 'All sessions', exact: true })
+      .click();
+    await expect(page.locator('.session-card')).toHaveCount(5);
+  } finally {
+    const cleanup = database.batch();
+    [...sessionRefs, ...entryRefs].forEach((ref) => cleanup.delete(ref));
+    await cleanup.commit();
+    await deleteApp(fixtureApp);
+  }
+});
+
+test('owner can page all import preview rows and all validation issues', async ({
+  page,
+}) => {
+  await login(page, 'admin');
+  const csv =
+    'Account Number,Unique Number,Account Name\n' +
+    Array.from(
+      { length: 105 },
+      (_, i) =>
+        `990${String(i).padStart(4, '0')},LCT${99000 + i},Import preview fixture ${i}\n`,
+    ).join('');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'paged-preview.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv),
+  });
+  await expect(page.locator('tbody tr')).toHaveCount(50);
+  const preview = page.getByRole('navigation', {
+    name: 'Import preview pages',
+  });
+  await preview.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(50);
+  await preview.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('tbody tr')).toHaveCount(5);
+  await expect(page.locator('tbody')).toContainText(
+    'Import preview fixture 104',
+  );
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'paged-errors.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv.replaceAll(/LCT[0-9]+/g, 'INVALID')),
+  });
+  const issues = page.getByRole('navigation', { name: 'Import issue pages' });
+  await expect(issues).toContainText('1–50');
+  await expect(page.locator('.alert.error li')).toHaveCount(50);
+  await issues.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(issues).toContainText('51–100');
+  await issues.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('.alert.error li')).toHaveCount(5);
+  await expect(
+    page.getByRole('button', { name: 'Apply updates', exact: true }),
+  ).toBeDisabled();
 });

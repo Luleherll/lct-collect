@@ -1,14 +1,7 @@
 import { matchesAccount, groupAccounts } from '../lib/account';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
-import {
-  doc,
-  onSnapshot,
-  orderBy,
-  limit,
-  where,
-  type QueryConstraint,
-} from 'firebase/firestore';
+import { doc, onSnapshot, orderBy, limit, where } from 'firebase/firestore';
 import {
   auth,
   db,
@@ -25,7 +18,6 @@ import {
   workday,
 } from '../lib/domain';
 import {
-  flatten,
   LABELS,
   TYPES,
   type Entry,
@@ -44,6 +36,9 @@ import {
 } from '../lib/operations';
 
 import Icon from './Icon';
+import Pagination from './Pagination';
+import LoadingOverlay from './LoadingOverlay';
+import { usePagination } from '../hooks/usePagination';
 import MemberResults from './MemberResults';
 import Modal from './Modal';
 import { Account, Status } from './Account';
@@ -118,7 +113,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [markingRow, setMarkingRow] = useState('');
   const [undoRow, setUndoRow] = useState<Row | null>(null);
-  const [historyCount, setHistoryCount] = useState(20);
+  const [connectionWaited, setConnectionWaited] = useState(false);
   const dirty = TYPES.some((t) => values[t].trim() !== '');
   const depositRef = useRef<HTMLInputElement>(null);
   const mutation = useRef(false);
@@ -356,35 +351,47 @@ export default function App({ route: initialRoute }: { route: string }) {
       ...(isViewer
         ? [where('workday', '==', date)]
         : route === 'history'
-          ? [orderBy('workday', 'desc'), limit(historyCount)]
+          ? [orderBy('workday', 'desc'), limit(5)]
           : [where('workday', '==', today)]),
     ],
-    `${user?.uid}/${isViewer ? date : route === 'history' ? historyCount : 'current'}/${today}`,
+    `${user?.uid}/${isViewer ? date : route === 'history' ? 'latest-five' : 'current'}/${today}`,
     authorized && (isAgent || isViewer),
   );
   const entryDay = route === 'history' ? historyDay : isViewer ? date : today;
-  const constraints: QueryConstraint[] = [
-    ...(isAgent ? [where('agentId', '==', user?.uid ?? '')] : []),
-    ...(entryDay ? [where('workday', '==', entryDay)] : []),
-  ];
-  const regularEntries = useRecords<Entry>(
-    'entries',
-    constraints,
-    `${user?.uid}/${entryDay}`,
-    authorized && isAgent && !!entryDay,
+  const showingEntries =
+    isViewer ||
+    (isAgent && (route === 'recent' || (route === 'history' && !!historyDay)));
+  const entries = usePagedEntries(
+    entryDay,
+    `${user?.uid}/${profile?.role}/${route}`,
+    authorized && showingEntries,
+    isAgent ? user?.uid : undefined,
   );
-  const pagedEntries = usePagedEntries(
-    date,
-    user?.uid ?? '',
-    authorized && isViewer,
+  const searchPages = usePagination(
+    groupAccounts(members.data, memberQuery, true),
+    memberQuery,
   );
-  const entries = isViewer ? pagedEntries : regularEntries;
   const session = sessions.data.find((s) => s.workday === today);
   const cached = isAdmin
     ? members.cached
     : isViewer
       ? entries.cached || sessions.cached
-      : members.cached || sessions.cached || (!!entryDay && entries.cached);
+      : members.cached || sessions.cached || (showingEntries && entries.cached);
+  const waitingForAgentData = !!(
+    authorized &&
+    isAgent &&
+    network &&
+    cached &&
+    !(members.error || sessions.error || entries.error)
+  );
+  const waitKey = `${user?.uid}/${route}/${entryDay}`;
+  useEffect(() => {
+    setConnectionWaited(false);
+    if (!waitingForAgentData) return;
+    const timer = window.setTimeout(() => setConnectionWaited(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [waitKey, waitingForAgentData]);
+  const loadingAgent = waitingForAgentData && !connectionWaited;
   const writable = network && !cached && !busy;
   useEffect(() => {
     if (!cached)
@@ -559,7 +566,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setError('');
     setModal('line');
   }
-  const allRows = flatten(entries.data).sort(
+  const allRows = [...entries.rows].sort(
     (a, b) =>
       (b.entry.createdAt?.toMillis() ?? 0) -
       (a.entry.createdAt?.toMillis() ?? 0),
@@ -604,7 +611,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             value={q}
             onChange={setQ}
             label={viewer ? 'Search this page' : 'Search entries'}
-            placeholder={viewer ? 'Search this page' : undefined}
+            placeholder="Search this page"
           />
           <label>
             Status
@@ -662,6 +669,19 @@ export default function App({ route: initialRoute }: { route: string }) {
           </div>
         )}
       </>
+    );
+  }
+  function entryPagination(label: string) {
+    return (
+      <Pagination
+        label={label}
+        page={entries.page + 1}
+        hasPrevious={entries.page > 0}
+        hasNext={entries.hasNext}
+        onPrevious={entries.previous}
+        onNext={entries.next}
+        busy={busy || entries.loading}
+      />
     );
   }
   function rowsView(rows: Row[], viewer = false) {
@@ -773,7 +793,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   if (!authReady)
     return (
       <div className="boot-shell">
-        <header className="app-header">
+        <header className="app-header" inert={loadingAgent}>
           <div className="header-inner">
             <div className="brand">
               <a href="/">LCT Collect</a>
@@ -809,7 +829,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   const queryError = members.error || sessions.error || entries.error;
   return (
     <>
-      <header className="app-header">
+      <header className="app-header" inert={loadingAgent}>
         <div className="header-inner">
           <div className="brand">
             <a href={HOME[profile.role]}>LCT Collect</a>
@@ -842,6 +862,8 @@ export default function App({ route: initialRoute }: { route: string }) {
         </div>
       </header>
       <main
+        inert={loadingAgent}
+        aria-busy={loadingAgent}
         tabIndex={-1}
         id="main-content"
         className={`${isViewer || isAdmin ? 'page wide' : 'page'} ${route}-page`}
@@ -854,13 +876,20 @@ export default function App({ route: initialRoute }: { route: string }) {
               ' Sign-in lasts while this page is open. Enable site storage to save collection entries.'}
           </p>
         )}
-        {(cached || !network) && (
-          <div className="connection" role="status">
+        {(cached || !network) && (!isAgent || !loadingAgent) && (
+          <div
+            className={isAgent ? 'connection compact-connection' : 'connection'}
+            role="status"
+          >
             <Icon name="wifi-off" />
             <span>
-              {!network
-                ? 'Offline — viewing saved records. Connect to make changes.'
-                : 'Connecting — showing saved records; results may be incomplete.'}
+              {isAgent
+                ? !network
+                  ? 'You’re offline · saved data may be outdated.'
+                  : 'Can’t connect · saved data may be outdated.'
+                : !network
+                  ? 'Offline — viewing saved records. Connect to make changes.'
+                  : 'Connecting — showing saved records; results may be incomplete.'}
             </span>
           </div>
         )}
@@ -1026,11 +1055,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                   {memberQuery.trim() && (
                     <>
                       <MemberResults
-                        groups={groupAccounts(
-                          members.data,
-                          memberQuery,
-                          true,
-                        ).slice(0, 8)}
+                        groups={searchPages.items}
                         searching
                         disabled={uncertain || busy}
                         onSelect={(m) => {
@@ -1055,8 +1080,18 @@ export default function App({ route: initialRoute }: { route: string }) {
                             );
                         }}
                       />
-                      {!groupAccounts(members.data, memberQuery, true)
-                        .length && (
+                      {searchPages.pageCount > 1 && (
+                        <Pagination
+                          label="Member search pages"
+                          page={searchPages.page}
+                          pageCount={searchPages.pageCount}
+                          summary={searchPages.summary}
+                          onPrevious={searchPages.previous}
+                          onNext={searchPages.next}
+                          busy={busy || uncertain}
+                        />
+                      )}
+                      {!searchPages.items.length && (
                         <p className="no-match">
                           Member not found.
                           {members.cached
@@ -1194,23 +1229,21 @@ export default function App({ route: initialRoute }: { route: string }) {
               <p>{dayLabel(today)} · Your current workday</p>
             </div>
             {Filters({})}
+            <p className="list-summary">
+              {filtered.length} lines match on this page
+            </p>
             {rowsView(filtered)}
+            {entryPagination('Recent entry pages')}
           </>
         )}
         {isAgent && route === 'history' && (
           <>
-            <a className="back-link" href="/agent/">
-              <Icon name="arrow-left" />
-              Back to collection
-            </a>
-            <div className="page-heading">
-              <h1>Session history</h1>
-              <p>
-                Previous workdays are read-only. Office recording can continue.
-              </p>
-            </div>
-            {historyDay ? (
-              <>
+            <div className="history-navigation">
+              <a className="back-link" href="/agent/">
+                <Icon name="arrow-left" />
+                Back to collection
+              </a>
+              {historyDay && (
                 <button
                   className="text-button"
                   onClick={() => {
@@ -1222,73 +1255,72 @@ export default function App({ route: initialRoute }: { route: string }) {
                 >
                   All sessions
                 </button>
-                <h2>{dayLabel(historyDay)}</h2>
+              )}
+            </div>
+            <div className="page-heading">
+              <h1>{historyDay ? dayLabel(historyDay) : 'Recent workdays'}</h1>
+              <p>
+                {historyDay
+                  ? 'Previous workdays are read-only. Amounts in UGX.'
+                  : 'Your latest five workdays · amounts in UGX'}
+              </p>
+            </div>
+            {historyDay ? (
+              <>
                 {Filters({})}
+                <p className="list-summary">
+                  {filtered.length} lines match on this page
+                </p>
                 {rowsView(filtered)}
+                {entryPagination('Workday entry pages')}
               </>
             ) : (
               <div className="session-list">
                 {sessions.loading ? (
-                  <p>Loading sessions…</p>
+                  <p role="status">Loading workdays…</p>
                 ) : !sessions.data.length ? (
-                  <p className="empty">No saved sessions yet.</p>
+                  <p className="empty">No saved workdays yet.</p>
                 ) : (
-                  sessions.data.map((s) => {
-                    return (
-                      <button
-                        className="session-card"
-                        key={s.sessionId}
-                        onClick={() => {
-                          setHistoryDay(s.workday);
-                          setQ('');
-                          setType('all');
-                          setStatus('all');
-                        }}
-                      >
-                        <div className="session-title">
-                          <strong>{dayLabel(s.workday)}</strong>
-                          <span className="status">
-                            {s.workday === today ? 'Current' : 'Read-only'}
-                          </span>
+                  sessions.data.map((s) => (
+                    <button
+                      className="session-card compact-session"
+                      key={s.sessionId}
+                      onClick={() => {
+                        setHistoryDay(s.workday);
+                        setQ('');
+                        setType('all');
+                        setStatus('all');
+                      }}
+                    >
+                      <div className="session-title">
+                        <strong>{dayLabel(s.workday)}</strong>
+                        <span className="status">
+                          {s.workday === today ? 'Current' : 'Read-only'}
+                        </span>
+                        <Icon name="chevron-right" />
+                      </div>
+                      <dl className="session-totals">
+                        <div>
+                          <dt>Deposits</dt>
+                          <dd>{money(s.totalDeposits)}</dd>
                         </div>
-                        <dl className="session-totals">
-                          <div>
-                            <dt>Opening</dt>
-                            <dd>{money(s.openingCash)}</dd>
-                          </div>
-                          <div>
-                            <dt>Deposits</dt>
-                            <dd>{money(s.totalDeposits)}</dd>
-                          </div>
-                          <div>
-                            <dt>Withdrawals</dt>
-                            <dd>{money(s.totalWithdrawals)}</dd>
-                          </div>
-                          <div>
-                            <dt>Loan instalments</dt>
-                            <dd>{money(s.totalLoanInstalments)}</dd>
-                          </div>
-                        </dl>
-                        <div className="session-bottom">
-                          <span>
-                            Expected closing cash{' '}
-                            <strong>UGX {money(s.expectedCash)}</strong>
-                          </span>
-                          <span>View this workday’s entries</span>
-                          <Icon name="chevron-right" />
+                        <div>
+                          <dt>Withdrawals</dt>
+                          <dd>{money(s.totalWithdrawals)}</dd>
                         </div>
-                      </button>
-                    );
-                  })
-                )}
-                {sessions.data.length >= historyCount && (
-                  <button
-                    className="button outline full"
-                    disabled={sessions.loading}
-                    onClick={() => setHistoryCount((n) => n + 20)}
-                  >
-                    Load older sessions
-                  </button>
+                        <div>
+                          <dt>Loan instalments</dt>
+                          <dd>{money(s.totalLoanInstalments)}</dd>
+                        </div>
+                      </dl>
+                      <div className="session-bottom">
+                        <span>Opening {money(s.openingCash)}</span>
+                        <span>
+                          Expected cash <strong>{money(s.expectedCash)}</strong>
+                        </span>
+                      </div>
+                    </button>
+                  ))
                 )}
               </div>
             )}
@@ -1351,26 +1383,10 @@ export default function App({ route: initialRoute }: { route: string }) {
                 {filtered.length} lines match on this page
                 {cached ? ' · saved records' : ''}
               </span>
-              <span>50 entries per page</span>
+              <span>Up to 50 lines per page</span>
             </div>
             {rowsView(filtered, true)}
-            <nav className="pagination" aria-label="Register pages">
-              <button
-                className="button outline small"
-                disabled={busy || entries.loading || pagedEntries.page === 0}
-                onClick={pagedEntries.previous}
-              >
-                Previous
-              </button>
-              <span aria-live="polite">Page {pagedEntries.page + 1}</span>
-              <button
-                className="button outline small"
-                disabled={busy || entries.loading || !pagedEntries.hasNext}
-                onClick={pagedEntries.next}
-              >
-                Next
-              </button>
-            </nav>
+            {entryPagination('Register pages')}
           </>
         )}
         {isAdmin && (
@@ -1429,6 +1445,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           </div>
         </Modal>
       )}
+      {loadingAgent && <LoadingOverlay />}
       {modal === 'cash' && session && (
         <Modal title="Cash breakdown" onClose={() => setModal(null)}>
           <p>
