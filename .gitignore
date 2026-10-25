@@ -17,3 +17,6 @@ playwright-report/
 test-results/
 
 .test-dist/
+
+preview-dist/
+preview.firebase.json
