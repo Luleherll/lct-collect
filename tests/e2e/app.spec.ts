@@ -655,6 +655,94 @@ test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages n
   }
 });
 
+test('exact full single-line pages stop at the end and follow live lookahead changes', async ({
+  page,
+}) => {
+  process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
+  if (
+    !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(
+      process.env.FIRESTORE_EMULATOR_HOST,
+    )
+  )
+    throw new Error('Local emulator only');
+  const { initializeApp, deleteApp } = await import('firebase-admin/app');
+  const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
+  const fixtureApp = initializeApp(
+    { projectId: 'demo-lct-collect' },
+    'exact-page-boundary',
+  );
+  const database = getFirestore(fixtureApp);
+  const sample = (
+    await database.collection('entries').limit(1).get()
+  ).docs[0].data();
+  const refs = Array.from({ length: 100 }, (_, i) =>
+    database.doc(`entries/exact_page_${i}`),
+  );
+  const makeEntry = (i: number) => ({
+    ...sample,
+    entryId: refs[i].id,
+    workday: '2020-03-01',
+    memberNameSnapshot: `Exact page ${i}`,
+    createdAt: Timestamp.fromMillis(1583020800000 - i * 1000),
+    lines: {
+      deposit: { ...sample.lines.deposit, recorded: false, state: 'active' },
+    },
+  });
+  try {
+    const first = database.batch();
+    refs.slice(0, 50).forEach((ref, i) => first.set(ref, makeEntry(i)));
+    await first.commit();
+    await login(page, 'viewer');
+    await page.getByLabel('Workday', { exact: true }).fill('2020-03-01');
+    const rows = page.locator('.register .entry-row');
+    const next = page.getByRole('button', { name: 'Next', exact: true });
+    const previous = page.getByRole('button', {
+      name: 'Previous',
+      exact: true,
+    });
+    await expect(rows).toHaveCount(50);
+    await expect(
+      rows.first().getByRole('button', { name: 'Mark recorded' }),
+    ).toBeEnabled();
+    await expect(next).toBeDisabled();
+    // Adding/deleting an older entry leaves the first 50 documents unchanged.
+    // Only the lookahead listener can update Next in these cases.
+    await refs[50].set(makeEntry(50));
+    await expect(next).toBeEnabled();
+    await refs[50].delete();
+    await expect(next).toBeDisabled();
+    await refs[50].set(makeEntry(50));
+    await expect(next).toBeEnabled();
+    await next.click();
+    await expect(rows).toHaveCount(1);
+    await expect(next).toBeDisabled();
+    await previous.click();
+    await expect(rows).toHaveCount(50);
+    const rest = database.batch();
+    refs
+      .slice(51)
+      .forEach((ref, offset) => rest.set(ref, makeEntry(offset + 51)));
+    await rest.commit();
+    await expect(next).toBeEnabled();
+    await next.click();
+    await expect(rows).toHaveCount(50);
+    await expect(
+      rows.first().getByRole('button', { name: 'Mark recorded' }),
+    ).toBeEnabled();
+    await expect(next).toBeDisabled();
+    await expect(page.locator('.pagination')).toContainText('Page 2');
+    await expect(
+      page.getByText('No matching entries', { exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await page.goto('/login/');
+    const cleanup = database.batch();
+    refs.forEach((ref) => cleanup.delete(ref));
+    await cleanup.commit();
+    await deleteApp(fixtureApp);
+  }
+});
+
 test('agent shows five compact workdays and pages every line without losing split entries', async ({
   page,
 }) => {

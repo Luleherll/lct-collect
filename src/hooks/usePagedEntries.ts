@@ -38,6 +38,7 @@ const empty = (key: string, loading: boolean): Result => ({
   hasNext: false,
 });
 /** A page contains at most 50 lines and fetches at most 50 entry documents.
+ * An ambiguous full batch uses a separate one-document live lookahead.
  * A cursor can resume within a multi-line entry, so its other lines are never lost.
  * Recording/voiding does not change the immutable line keys or page boundaries. */
 export function usePagedEntries(
@@ -63,13 +64,19 @@ export function usePagedEntries(
   useEffect(() => {
     setResult(empty(resultKey, enabled));
     if (!enabled) return;
-    return onSnapshot(
+    let stopLookahead: (() => void) | undefined;
+    let lookaheadKey = '';
+    let followingExists = false;
+    const base = query(
+      collection(db(), 'entries'),
+      where('workday', '==', day),
+      ...(agentId ? [where('agentId', '==', agentId)] : []),
+      orderBy('createdAt', 'desc'),
+      orderBy(documentId(), 'desc'),
+    );
+    const stopPage = onSnapshot(
       query(
-        collection(db(), 'entries'),
-        where('workday', '==', day),
-        ...(agentId ? [where('agentId', '==', agentId)] : []),
-        orderBy('createdAt', 'desc'),
-        orderBy(documentId(), 'desc'),
+        base,
         ...(cursor
           ? [cursor.skip ? startAt(cursor.doc) : startAfter(cursor.doc)]
           : []),
@@ -94,7 +101,7 @@ export function usePagedEntries(
                   : 0,
             }
           : null;
-        setResult({
+        const page: Result = {
           key: resultKey,
           rows: visible.map((v) => v.row),
           data: Array.from(
@@ -106,12 +113,59 @@ export function usePagedEntries(
           cached: snap.metadata.fromCache,
           error: '',
           nextCursor,
-          hasNext:
-            available.length > PAGE_SIZE || snap.docs.length === PAGE_SIZE,
-        });
+          hasNext: available.length > PAGE_SIZE,
+        };
+        const boundary =
+          last && !page.hasNext && snap.docs.length === PAGE_SIZE
+            ? last.doc.ref.path
+            : '';
+        if (boundary !== lookaheadKey) {
+          stopLookahead?.();
+          stopLookahead = undefined;
+          lookaheadKey = boundary;
+          followingExists = false;
+        }
+        if (boundary) page.hasNext = followingExists;
+        setResult(page);
+        // A full batch alone does not prove that another entry exists. Keep
+        // Next disabled until the lookahead confirms it; listen so additions
+        // and deletions beyond this page update the control in real time.
+        if (last && boundary && !stopLookahead) {
+          stopLookahead = onSnapshot(
+            query(base, startAfter(last.doc), limit(1)),
+            { includeMetadataChanges: true },
+            (following) => {
+              if (
+                following.metadata.hasPendingWrites ||
+                lookaheadKey !== boundary
+              )
+                return;
+              followingExists = !following.empty;
+              setResult((current) => ({
+                ...current,
+                hasNext: followingExists,
+              }));
+            },
+            (e) => {
+              if (lookaheadKey !== boundary) return;
+              setResult((current) => ({
+                ...current,
+                hasNext: false,
+                error: message(e),
+              }));
+            },
+          );
+        }
       },
-      (e) => setResult({ ...empty(resultKey, false), error: message(e) }),
+      (e) => {
+        stopLookahead?.();
+        setResult({ ...empty(resultKey, false), error: message(e) });
+      },
     );
+    return () => {
+      stopPage();
+      stopLookahead?.();
+    };
   }, [resultKey, enabled]);
   const visible = result.key === resultKey ? result : empty(resultKey, enabled);
   return {
