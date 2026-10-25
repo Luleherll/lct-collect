@@ -675,6 +675,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     return (
       <Pagination
         label={label}
+        focusTarget="entry-results"
         page={entries.page + 1}
         hasPrevious={entries.page > 0}
         hasNext={entries.hasNext}
@@ -688,7 +689,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     if (entries.loading) return <p className="empty">Loading entries…</p>;
     if (!rows.length)
       return (
-        <div className="empty">
+        <div className="empty" id="entry-results" tabIndex={-1}>
           <Icon name="list-ul" />
           <h3>
             {cached ? 'No matching saved records' : 'No matching entries'}
@@ -703,7 +704,13 @@ export default function App({ route: initialRoute }: { route: string }) {
         </div>
       );
     return (
-      <div className={viewer ? 'register' : 'entry-list'}>
+      <div
+        id="entry-results"
+        tabIndex={-1}
+        role="region"
+        aria-label="Entry results"
+        className={viewer ? 'register' : 'entry-list'}
+      >
         {viewer && (
           <div className="register-head">
             <span>Member account</span>
@@ -718,11 +725,15 @@ export default function App({ route: initialRoute }: { route: string }) {
             className="entry-row"
             key={`${row.entry.entryId}:${row.type}`}
           >
-            <button className="entry-identity" onClick={() => showLine(row)}>
+            <button
+              className="entry-identity"
+              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, account ${row.entry.accountNumberSnapshot}`}
+              onClick={() => showLine(row)}
+            >
               <strong>{row.entry.memberNameSnapshot}</strong>
               <span>{row.entry.accountNumberSnapshot}</span>
               <span>
-                {timeLabel(row.entry.createdAt)} · <Status row={row} />
+                {timeLabel(row.entry.createdAt)} <Status row={row} />
               </span>
             </button>
             <div className="entry-kind">
@@ -841,6 +852,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             {isAgent ? (
               <>
                 <a
+                  aria-current={route === 'recent' ? 'page' : undefined}
                   className={route === 'recent' ? 'active' : ''}
                   href="/agent/recent/"
                 >
@@ -848,6 +860,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                   <span>Recent entries</span>
                 </a>
                 <a
+                  aria-current={route === 'history' ? 'page' : undefined}
                   className={route === 'history' ? 'active' : ''}
                   href="/agent/history/"
                 >

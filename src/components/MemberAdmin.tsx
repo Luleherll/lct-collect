@@ -74,7 +74,7 @@ export default function MemberAdmin({
               aria-label="Choose CSV"
               type="file"
               accept=".csv,text/csv"
-              disabled={!writable || reading}
+              disabled={!writable || reading || busy}
               onChange={(e) => {
                 void read(e.target.files?.[0]);
                 e.target.value = '';
@@ -203,6 +203,7 @@ export default function MemberAdmin({
             </button>
             <button
               className="button"
+              aria-busy={busy}
               disabled={!writable || !!plan.errors.length}
               onClick={() =>
                 void action(async () => {

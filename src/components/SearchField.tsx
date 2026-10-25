@@ -6,7 +6,7 @@ export default function SearchField({
   label,
   id,
   disabled = false,
-  placeholder = 'Search name, member or account number',
+  placeholder = 'Name or account number',
 }: {
   value: string;
   onChange: (value: string) => void;

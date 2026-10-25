@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { join } from 'node:path';
+import AxeBuilder from '@axe-core/playwright';
 import { bounds, workday } from '../../src/lib/domain';
 const evidence = process.env.LCT_UI_EVIDENCE_DIR ?? 'test-results/visual';
 async function login(page: Page, role = 'agent') {
@@ -715,6 +716,7 @@ test('exact full single-line pages stop at the end and follow live lookahead cha
     await expect(next).toBeEnabled();
     await next.click();
     await expect(rows).toHaveCount(1);
+    await expect(page.locator('#entry-results')).toBeFocused();
     await expect(next).toBeDisabled();
     await previous.click();
     await expect(rows).toHaveCount(50);
@@ -930,3 +932,126 @@ test('owner can page all import preview rows and all validation issues', async (
     page.getByRole('button', { name: 'Apply updates', exact: true }),
   ).toBeDisabled();
 });
+
+test('sign-in gives field-linked recovery and preserves masked credentials', async ({
+  page,
+}) => {
+  await page.goto('/login/');
+  const username = page.getByPlaceholder('Your username');
+  const password = page.getByPlaceholder('Your password');
+  const submit = page.getByRole('button', { name: 'Sign in', exact: true });
+  await expect(username).toBeVisible();
+  await submit.click();
+  await expect(username).toBeFocused();
+  await expect(username).toHaveAttribute('aria-invalid', 'true');
+  await expect(username).toHaveAttribute('aria-describedby', 'username-error');
+  await expect(page.locator('#username-error')).toContainText(
+    'assigned username',
+  );
+  await username.fill('demo.agent');
+  await submit.click();
+  await expect(password).toBeFocused();
+  await expect(password).toHaveAttribute('aria-invalid', 'true');
+  await expect(password).toHaveAttribute('aria-describedby', 'password-error');
+  await password.fill('wrong-password');
+  await expect(password).toHaveAttribute('type', 'password');
+  await page
+    .getByRole('button', { name: 'Show password', exact: true })
+    .click();
+  await expect(password).toHaveAttribute('type', 'text');
+  await expect(
+    page.getByRole('button', { name: 'Hide password' }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Hide password' }).click();
+  await submit.click();
+  await expect(page.getByRole('alert')).toContainText('Sign-in failed');
+  await expect(username).toHaveValue('demo.agent');
+  await expect(password).toHaveValue('wrong-password');
+  await password.fill('CollectDemo123!');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await submit.click();
+  await page.waitForURL('**/agent/');
+});
+
+test('minimal directory shows one account directly and active navigation is announced', async ({
+  page,
+}) => {
+  await login(page, 'admin');
+  await page.getByLabel('Search directory', { exact: true }).fill('LCT003');
+  const result = page.locator('.directory-list .member-result');
+  await expect(result).toHaveCount(1);
+  await expect(result).toContainText('000401001003');
+  await expect(result.locator('summary')).toHaveCount(0);
+  await noOverflow(page);
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.waitForURL('**/login/');
+  await login(page);
+  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await expect(
+    page.getByRole('link', { name: 'Recent entries', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
+  await page.getByRole('link', { name: 'History', exact: true }).click();
+  await expect(
+    page.getByRole('link', { name: 'History', exact: true }),
+  ).toHaveAttribute('aria-current', 'page');
+  await expect(
+    page.getByRole('link', { name: 'Recent entries', exact: true }),
+  ).not.toHaveAttribute('aria-current', 'page');
+});
+
+for (const width of [320, 1280]) {
+  for (const role of ['agent', 'viewer', 'admin']) {
+    test(`accessible ${role} screens and dialogs at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+      async function audit(screen: string) {
+        await noOverflow(page);
+        const result = await new AxeBuilder({ page })
+          .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+          .analyze();
+        expect(
+          result.violations,
+          `${screen} at ${width}px: ${JSON.stringify(result.violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) })))}`,
+        ).toEqual([]);
+      }
+      await page.goto('/login/');
+      await expect(page.getByPlaceholder('Your username')).toBeVisible();
+      if (role === 'agent') await audit('Login');
+      await login(page, role);
+      if (role === 'agent') {
+        await select(page);
+        await audit('Collection');
+        await page.locator('#deposit').fill('2000');
+        await page
+          .getByRole('button', { name: 'Review entry', exact: true })
+          .click();
+        await expect(page.getByRole('dialog')).toBeVisible();
+        await audit('Review dialog');
+        await page
+          .getByRole('button', { name: 'Back / edit', exact: true })
+          .click();
+        await page.locator('#deposit').fill('');
+        await page
+          .getByRole('link', { name: 'Recent entries', exact: true })
+          .click();
+        await expect(page.locator('.loading-overlay')).toHaveCount(0);
+        await audit('Recent entries');
+        await page.getByRole('link', { name: 'History', exact: true }).click();
+        await expect(page.locator('.compact-session').first()).toBeVisible();
+        await audit('Workdays');
+      } else if (role === 'viewer') {
+        await expect(
+          page.locator('.register .entry-row').first(),
+        ).toBeVisible();
+        await audit('Viewer');
+      } else {
+        await page
+          .getByLabel('Search directory', { exact: true })
+          .fill('LCT003');
+        await expect(page.locator('.directory-single')).toBeVisible();
+        await audit('Directory');
+      }
+    });
+  }
+}

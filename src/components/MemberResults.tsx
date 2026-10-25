@@ -35,6 +35,20 @@ export default function MemberResults({
             </span>
             <Icon name="chevron-right" />
           </button>
+        ) : !onSelect && g.accounts.length === 1 ? (
+          <article className="member-result directory-single" key={g.key}>
+            <div className="member-result-identity">
+              <strong>{g.fullName}</strong>
+              <span>
+                {g.uniqueNumber ?? 'Member number pending import'}
+                {g.group && <span className="group-chip">Group</span>}
+                <span className="directory-account">
+                  Account no. {g.accounts[0].accountNumber}
+                </span>
+              </span>
+            </div>
+            {!g.accounts[0].active && <span className="status">Inactive</span>}
+          </article>
         ) : (
           <details
             className="member-result"

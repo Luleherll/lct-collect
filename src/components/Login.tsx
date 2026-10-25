@@ -9,6 +9,10 @@ export default function Login({ notice }: { notice: string }) {
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [show, setShow] = useState(false);
+  const [fieldError, setFieldError] = useState<{
+    field: 'username' | 'password';
+    text: string;
+  } | null>(null);
   const [cacheWarning] = useState(() => {
     const warning = storage.get('session', 'lct-cache-warning') ?? '';
     storage.remove('session', 'lct-cache-warning');
@@ -32,13 +36,25 @@ export default function Login({ notice }: { notice: string }) {
           noValidate
           onSubmit={async (e) => {
             e.preventDefault();
+            if (busy) return;
             setError('');
-            setBusy(true);
-            const data = new FormData(e.currentTarget);
+            setFieldError(null);
+            const form = e.currentTarget;
+            const data = new FormData(form);
+            let email: string;
+            let invalid: 'username' | 'password' = 'username';
             try {
-              const email = usernameEmail(data.get('username') as string);
+              email = usernameEmail(data.get('username') as string);
+              invalid = 'password';
               if (!data.get('password'))
                 throw new Error('Enter your password.');
+            } catch (err) {
+              setFieldError({ field: invalid, text: message(err) });
+              (form.elements.namedItem(invalid) as HTMLInputElement)?.focus();
+              return;
+            }
+            setBusy(true);
+            try {
               await prepareLogin();
               await signInWithEmailAndPassword(
                 auth,
@@ -52,22 +68,49 @@ export default function Login({ notice }: { notice: string }) {
             }
           }}
         >
-          <label>
+          <label htmlFor="login-username">
             Username
             <input
+              id="login-username"
               name="username"
+              disabled={busy}
+              aria-invalid={fieldError?.field === 'username'}
+              aria-describedby={
+                fieldError?.field === 'username' ? 'username-error' : undefined
+              }
+              onChange={() => {
+                setFieldError(null);
+                setError('');
+              }}
               autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
               required
               placeholder="Your username"
             />
+            {fieldError?.field === 'username' && (
+              <span className="field-error" id="username-error" role="alert">
+                {fieldError.text}
+              </span>
+            )}
           </label>
-          <label>
-            Password
+          <div className="password-field">
+            <label htmlFor="login-password">Password</label>
             <div className="password-input">
               <input
+                id="login-password"
                 name="password"
+                disabled={busy}
+                aria-invalid={fieldError?.field === 'password'}
+                aria-describedby={
+                  fieldError?.field === 'password'
+                    ? 'password-error'
+                    : undefined
+                }
+                onChange={() => {
+                  setFieldError(null);
+                  setError('');
+                }}
                 aria-label="Password"
                 type={show ? 'text' : 'password'}
                 autoComplete="current-password"
@@ -77,21 +120,32 @@ export default function Login({ notice }: { notice: string }) {
               <button
                 type="button"
                 className="icon-button"
+                aria-pressed={show}
+                aria-controls="login-password"
                 aria-label={show ? 'Hide password' : 'Show password'}
                 onClick={() => setShow((v) => !v)}
               >
                 <Icon name="eye" />
               </button>
             </div>
-          </label>
+            {fieldError?.field === 'password' && (
+              <span className="field-error" id="password-error" role="alert">
+                {fieldError.text}
+              </span>
+            )}
+          </div>
           <p className="small-note">
             Records you view are automatically saved on this device for offline
-            viewing. Sign out to remove saved records. Sign-in lasts for this
-            browser session.
+            viewing. Sign out to clear them. Sign-in lasts for this browser
+            session.
           </p>
-          <button className="button full" disabled={busy}>
+          <button className="button full" disabled={busy} aria-busy={busy}>
             {busy ? 'Signing in…' : 'Sign in'}
-            <Icon name="arrow-right" />
+            {busy ? (
+              <span className="button-spinner" aria-hidden="true" />
+            ) : (
+              <Icon name="arrow-right" />
+            )}
           </button>
         </form>
         <p className="login-help">
