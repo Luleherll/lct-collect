@@ -6,7 +6,7 @@
 - Firestore: `(default)`, Standard edition, Johannesburg (`africa-south1`).
 - Email/password authentication is enabled. Application users/profiles are still provisioned manually; Google Cloud sign-in does not create an application account.
 - Preview: https://lct-collect-staging--staging-5osd9ys7.web.app
-- The preview expires on 23 November 2026 unless renewed. Every staging deployment renews it for 30 days.
+- Every staging deployment renews the preview for 30 days; check the latest successful Actions run for its current expiry.
 - Production uses the separate project `lct-collect-prod`; its Hosting deployment remains disabled until the owner enables it.
 
 ## GitHub credentials
@@ -32,7 +32,7 @@ The identity and provider have been created in Google Cloud. No service-account 
 - `roles/datastore.indexAdmin`
 - `roles/serviceusage.serviceUsageConsumer`
 
-The provider accepts only repository ID `1424838142`, owner ID `36928255`, the `staging` GitHub environment, the exact `deploy-staging.yml` workflow, and the trusted `develop`/`main` refs for push/manual/scheduled events. Pull-request and arbitrary feature-branch tokens are rejected. No Functions, database record access or Firebase user-administration role was granted. The service account can administer security rules, so protect trusted workflow branches appropriately.
+The provider checks `assertion.environment == 'staging'` directly, together with repository ID `1424838142`, owner ID `36928255`, the `staging` GitHub environment, the exact `deploy-staging.yml` workflow, and the trusted `develop`/`main` refs for push/manual/scheduled events. Pull-request and arbitrary feature-branch tokens are rejected. No Functions, database record access or Firebase user-administration role was granted. The service account can administer security rules, so protect trusted workflow branches appropriately.
 
 The workflow requests `id-token: write` only for its deployment job. Google authentication occurs after tests/build, just before deployment. It uses short-lived credentials instead of `FIREBASE_SERVICE_ACCOUNT`. The Hosting command skips Auth-domain synchronization; the current preview domain was authorized during the initial owner deployment.
 
@@ -44,7 +44,7 @@ The workflow requests `id-token: write` only for its deployment job. Google auth
 4. To enable scheduled renewal and the Actions manual-run UI, the workflow definition must also exist in the repository default branch, `main`. Promote the reviewed baseline to `main` when appropriate; production stays disabled by default. The scheduled job runs on the 1st and 15th at 09:00 Uganda time and explicitly checks out `develop`.
 5. Configure branch protection/review requirements for trusted branches in repository Settings. Monitor Actions failures and preview expiry: schedules are best-effort.
 
-The first federated deployment cannot be verified until the workflow runs from a trusted ref. An unmerged feature-branch run deliberately cannot impersonate the staging service account.
+The first trusted-branch federated staging deployment passed on 25 October 2026: [run 40230310099, attempt 2](https://github.com/Luleherll/lct-collect/actions/runs/40230310099/attempts/2). It authenticated through the staging service account, deployed Firestore rules/indexes and renewed Hosting from develop commit `15857ff2b034e7ee8a4f99244b938b3dcea96040`. An unmerged feature-branch run deliberately cannot impersonate the staging service account.
 
 ## Production setup and activation
 
@@ -100,3 +100,13 @@ Rules now require a matching immutable `accountNumbers/{number}` reservation for
 ### Multi-account member directory
 
 Deploy the compatible rules before the UI. Directory records now contain separate `uniqueNumber` (LCT member / ABC group) and numeric `accountNumber` (real Ssentezo account). The original full export supplies both; all accounts remain active as before. Existing numeric document IDs stay stable. New records use `acct_<accountNumber>` IDs. A verified original Account Id bridge restores records affected by the earlier LCT-as-account interpretation, requiring the old LCT/ABC value to match the incoming member number. Old reservations remain immutable, and the real account-number reservation must still match. Once present, member ownership and real account number cannot be reassigned. New entries may carry a validated `uniqueNumberSnapshot`; historical snapshots remain immutable. Staging deployment changes no directory data; the owner reviews and applies the full 820-account export. Superseded 715-row member-only files omit valid accounts and must not be used for the full transition.
+
+## Troubleshooting federated authentication
+
+If `google-github-actions/auth` fails with `unauthorized_client` and “The given credential is rejected by the attribute condition,” inspect the Google Workload Identity provider condition before changing IAM roles or adding secrets. This is a trust-claim mismatch, not a Firebase build failure.
+
+GitHub can issue immutable OIDC subjects. For this repository, `GET /repos/Luleherll/lct-collect/actions/oidc/customization/sub` reports `use_immutable_subject: true` and a prefix containing owner/repository numeric IDs. Consequently, the legacy subject `repo:Luleherll/lct-collect:environment:staging` is not a valid equality check for its current tokens.
+
+The staging provider now checks `assertion.environment == 'staging'` directly. It retains all existing numeric repository/owner checks, exact workflow paths, trusted refs and allowed events. The provider's attribute mapping, service-account binding and deployment roles do not change. This supports both GitHub subject formats without admitting pull requests, other environments or feature branches. Do not remove the repository, workflow or branch restrictions to make authentication pass, and never log the raw OIDC token.
+
+After correcting an external provider condition, rerun the failed job on its original commit. A new application commit is unnecessary. A successful Firebase CLI login on a workstation does not verify the GitHub federated identity: the Actions authentication and deployment steps must pass with that identity.
