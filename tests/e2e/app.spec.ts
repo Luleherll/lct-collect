@@ -1046,6 +1046,7 @@ for (const width of [320, 1280]) {
         ).toBeVisible();
         await audit('Viewer');
       } else {
+        await expect(page.locator('.loading-overlay')).toHaveCount(0);
         await page
           .getByLabel('Search directory', { exact: true })
           .fill('LCT003');
