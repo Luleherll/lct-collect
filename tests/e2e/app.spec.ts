@@ -1046,6 +1046,7 @@ for (const width of [320, 1280]) {
         ).toBeVisible();
         await audit('Viewer');
       } else {
+        await expect(page.locator('.loading-overlay')).toHaveCount(0);
         await page
           .getByLabel('Search directory', { exact: true })
           .fill('LCT003');
@@ -1055,3 +1056,43 @@ for (const width of [320, 1280]) {
     });
   }
 }
+
+test('owner initial connection uses overlay then a compact offline fallback', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await login(page, 'admin');
+  await expect(
+    page.getByRole('heading', { name: 'Member directory', exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await expect(page.locator('.brand-link img')).toBeVisible();
+  await expect(page.locator('.brand-link img')).toHaveJSProperty(
+    'naturalWidth',
+    64,
+  );
+  const brandRight = await page
+    .locator('.brand-link')
+    .evaluate((el) => el.getBoundingClientRect().right);
+  const actionsLeft = await page
+    .locator('#owner-header-actions')
+    .evaluate((el) => el.getBoundingClientRect().left);
+  expect(brandRight).toBeLessThanOrEqual(actionsLeft);
+  await page.screenshot({ path: join(evidence, 'branded-admin-mobile.png') });
+  await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
+  await page.reload();
+  await expect(page.locator('.loading-overlay')).toBeVisible();
+  await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
+  await page.screenshot({ path: join(evidence, 'admin-loading-mobile.png') });
+  await expect(page.locator('.connection')).toHaveCount(0);
+  await expect(page.locator('.loading-overlay')).toBeHidden({ timeout: 12000 });
+  await expect(page.locator('.connection.compact-connection')).toContainText(
+    'data may be outdated',
+  );
+  await expect(page.getByLabel('Choose CSV', { exact: true })).toBeDisabled();
+  await page.screenshot({ path: join(evidence, 'admin-offline-mobile.png') });
+  await expect(
+    page.locator('.directory-list .member-result').first(),
+  ).toBeVisible();
+  await noOverflow(page);
+});
