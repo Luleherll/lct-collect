@@ -1071,6 +1071,13 @@ test('owner initial connection uses overlay then a compact offline fallback', as
     'naturalWidth',
     64,
   );
+  const brandRight = await page
+    .locator('.brand-link')
+    .evaluate((el) => el.getBoundingClientRect().right);
+  const actionsLeft = await page
+    .locator('#owner-header-actions')
+    .evaluate((el) => el.getBoundingClientRect().left);
+  expect(brandRight).toBeLessThanOrEqual(actionsLeft);
   await page.screenshot({ path: join(evidence, 'branded-admin-mobile.png') });
   await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
   await page.reload();
