@@ -5,6 +5,7 @@ import { usernameEmail } from '../lib/domain';
 import { message } from '../lib/errors';
 import { storage } from '../lib/storage';
 import Icon from './Icon';
+import Brand from './Brand';
 export default function Login({ notice }: { notice: string }) {
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -21,7 +22,7 @@ export default function Login({ notice }: { notice: string }) {
   return (
     <div className="login-page">
       <header className="login-brand">
-        <span>LCT Collect</span>
+        <Brand />
         <p>Lusaze Community Traders SACCO</p>
       </header>
       <main tabIndex={-1} id="main-content" className="login-shell">

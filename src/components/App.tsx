@@ -38,6 +38,7 @@ import {
 import Icon from './Icon';
 import Pagination from './Pagination';
 import LoadingOverlay from './LoadingOverlay';
+import Brand from './Brand';
 import { usePagination } from '../hooks/usePagination';
 import MemberResults from './MemberResults';
 import Modal from './Modal';
@@ -377,9 +378,9 @@ export default function App({ route: initialRoute }: { route: string }) {
     : isViewer
       ? entries.cached || sessions.cached
       : members.cached || sessions.cached || (showingEntries && entries.cached);
-  const waitingForAgentData = !!(
+  const waitingForData = !!(
     authorized &&
-    isAgent &&
+    (isAgent || isAdmin) &&
     network &&
     cached &&
     !(members.error || sessions.error || entries.error)
@@ -387,11 +388,11 @@ export default function App({ route: initialRoute }: { route: string }) {
   const waitKey = `${user?.uid}/${route}/${entryDay}`;
   useEffect(() => {
     setConnectionWaited(false);
-    if (!waitingForAgentData) return;
+    if (!waitingForData) return;
     const timer = window.setTimeout(() => setConnectionWaited(true), 8000);
     return () => window.clearTimeout(timer);
-  }, [waitKey, waitingForAgentData]);
-  const loadingAgent = waitingForAgentData && !connectionWaited;
+  }, [waitKey, waitingForData]);
+  const loadingData = waitingForData && !connectionWaited;
   const writable = network && !cached && !busy;
   useEffect(() => {
     if (!cached)
@@ -804,10 +805,10 @@ export default function App({ route: initialRoute }: { route: string }) {
   if (!authReady)
     return (
       <div className="boot-shell">
-        <header className="app-header" inert={loadingAgent}>
+        <header className="app-header" inert={loadingData}>
           <div className="header-inner">
             <div className="brand">
-              <a href="/">LCT Collect</a>
+              <Brand />
             </div>
           </div>
         </header>
@@ -840,10 +841,10 @@ export default function App({ route: initialRoute }: { route: string }) {
   const queryError = members.error || sessions.error || entries.error;
   return (
     <>
-      <header className="app-header" inert={loadingAgent}>
+      <header className="app-header" inert={loadingData}>
         <div className="header-inner">
           <div className="brand">
-            <a href={HOME[profile.role]}>LCT Collect</a>
+            <Brand href={HOME[profile.role]} />
             <p>
               {profile.displayName} · {dayLabel(headerDay)}
             </p>
@@ -875,8 +876,8 @@ export default function App({ route: initialRoute }: { route: string }) {
         </div>
       </header>
       <main
-        inert={loadingAgent}
-        aria-busy={loadingAgent}
+        inert={loadingData}
+        aria-busy={loadingData}
         tabIndex={-1}
         id="main-content"
         className={`${isViewer || isAdmin ? 'page wide' : 'page'} ${route}-page`}
@@ -889,14 +890,18 @@ export default function App({ route: initialRoute }: { route: string }) {
               ' Sign-in lasts while this page is open. Enable site storage to save collection entries.'}
           </p>
         )}
-        {(cached || !network) && (!isAgent || !loadingAgent) && (
+        {(cached || !network) && !loadingData && (
           <div
-            className={isAgent ? 'connection compact-connection' : 'connection'}
+            className={
+              isAgent || isAdmin
+                ? 'connection compact-connection'
+                : 'connection'
+            }
             role="status"
           >
             <Icon name="wifi-off" />
             <span>
-              {isAgent
+              {isAgent || isAdmin
                 ? !network
                   ? 'You’re offline · saved data may be outdated.'
                   : 'Can’t connect · saved data may be outdated.'
@@ -1458,7 +1463,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           </div>
         </Modal>
       )}
-      {loadingAgent && <LoadingOverlay />}
+      {loadingData && <LoadingOverlay />}
       {modal === 'cash' && session && (
         <Modal title="Cash breakdown" onClose={() => setModal(null)}>
           <p>

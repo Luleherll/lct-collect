@@ -14,6 +14,8 @@ it('generated worker caches only known static GETs and loads owner code on deman
   const root = mkdtempSync(join(tmpdir(), 'lct-sw-'));
   try {
     mkdirSync(join(root, '_astro'));
+    mkdirSync(join(root, 'icons'));
+    writeFileSync(join(root, 'icons', 'icon-192.png'), 'icon');
     writeFileSync(join(root, 'index.html'), '<html></html>');
     writeFileSync(join(root, '_astro', 'AppRoot.demo.js'), '/* app */');
     writeFileSync(join(root, '_astro', 'MemberAdmin.demo.js'), '/* owner */');
@@ -53,6 +55,7 @@ it('generated worker caches only known static GETs and loads owner code on deman
     });
     await installation;
     expect(installed).toContain('/_astro/AppRoot.demo.js');
+    expect(installed).toContain('/icons/icon-192.png');
     expect(installed).not.toContain('/_astro/MemberAdmin.demo.js');
     for (const [url, method] of [
       ['https://firestore.googleapis.com/data', 'GET'],

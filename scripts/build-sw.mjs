@@ -8,7 +8,7 @@ async function walk(dir) {
     const p = join(dir, item.name);
     if (item.isDirectory()) await walk(p);
     else if (
-      /\.(html|js|css|svg|webmanifest)$/.test(item.name) &&
+      /\.(html|js|css|svg|png|webmanifest)$/.test(item.name) &&
       item.name !== 'sw.js'
     )
       files.push(p);
