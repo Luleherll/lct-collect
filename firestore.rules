@@ -1,0 +1,186 @@
+// Directory records represent individual Ssentezo accounts. uniqueNumber is the
+// shared LCT member / ABC group identifier; accountNumber is the actual numeric
+// Ssentezo account. Existing record keys and financial snapshots are retained.
+// accountNumbers permanently reserves each numeric account to its record.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return request.auth != null && profile().active == true; }
+    function role(value) { return active() && profile().role == value; }
+    function integer(n, max) { return n is int && n >= 0 && n <= max; }
+    function pad(n) { return n < 10 ? '0' + string(n) : string(n); }
+    function dayString(t) { return string(t.year()) + '-' + pad(t.month()) + '-' + pad(t.day()); }
+    function currentStart() { return (request.time + duration.value(1, 'h')).date() - duration.value(1, 'h'); }
+    function current(s) { return s.startsAt <= request.time && request.time < s.endsAt; }
+    function lineAmount(e, kind) {
+      return kind in e.lines && e.lines[kind].state == 'active' ? e.lines[kind].amount : 0;
+    }
+    function sessionValid(s, id) {
+      return s.keys().hasAll(['sessionId','agentId','workday','startsAt','endsAt','openingCash','totalDeposits','totalWithdrawals','totalLoanInstalments','expectedCash','revision','lastMutationId','createdAt'])
+        && s.keys().hasOnly(['sessionId','agentId','workday','startsAt','endsAt','openingCash','totalDeposits','totalWithdrawals','totalLoanInstalments','expectedCash','revision','lastMutationId','createdAt'])
+        && s.sessionId == id && id == s.agentId + '_' + s.workday
+        && s.agentId == request.auth.uid && s.workday is string
+        && s.startsAt is timestamp && s.endsAt is timestamp
+        && s.workday == dayString(s.startsAt + duration.value(1,'h'))
+        && s.startsAt == (s.startsAt + duration.value(1,'h')).date() - duration.value(1,'h')
+        && s.endsAt == s.startsAt + duration.value(24,'h')
+        && integer(s.openingCash,100000000)
+        && integer(s.totalDeposits,9000000000000) && integer(s.totalWithdrawals,9000000000000)
+        && integer(s.totalLoanInstalments,9000000000000) && integer(s.expectedCash,9000000000000)
+        && s.expectedCash == s.openingCash + s.totalDeposits + s.totalLoanInstalments - s.totalWithdrawals
+        && integer(s.revision,9000000000000) && s.lastMutationId is string && s.lastMutationId.size() <= 100
+        && s.createdAt is timestamp;
+    }
+    function initialLine(l) {
+      return l.keys().hasAll(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory'])
+        && l.keys().hasOnly(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory'])
+        && integer(l.amount,100000000) && l.amount > 0 && l.state == 'active' && l.recorded == false
+        && l.recordedBy == null && l.recordedAt == null && l.voidedBy == null && l.voidedAt == null
+        && l.voidReason == '' && l.recordingRevision == 0 && l.recordingHistory == {};
+    }
+    function pairedSession(e) {
+      let before = get(/databases/$(database)/documents/sessions/$(e.sessionId)).data;
+      let after = getAfter(/databases/$(database)/documents/sessions/$(e.sessionId)).data;
+      return before.agentId == request.auth.uid && current(before) && e.workday == before.workday
+        && after.revision == before.revision + 1 && after.lastMutationId == e.entryId
+        && e.financialRevision == after.revision;
+    }
+    function entryCreate(e,id) {
+      let m = get(/databases/$(database)/documents/members/$(e.memberId)).data;
+      return e.keys().hasAll(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines'])
+        && e.keys().hasOnly(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines','uniqueNumberSnapshot'])
+        && e.entryId == id && id.matches('^[A-Za-z0-9_-]{8,100}$')
+        && e.sessionId is string && e.workday is string
+        && e.agentId == request.auth.uid && e.agentNameSnapshot is string
+        && e.agentNameSnapshot.size() > 0 && e.agentNameSnapshot.size() <= 120
+        && e.agentNameSnapshot == profile().displayName
+        && e.memberId == m.memberId && m.active == true
+        && e.accountNumberSnapshot == m.accountNumber && e.memberNameSnapshot == m.fullName
+        && (!('uniqueNumberSnapshot' in e) || ('uniqueNumber' in m && e.uniqueNumberSnapshot == m.uniqueNumber))
+        && e.createdAt == request.time && e.lines is map
+        && e.lines.keys().size() >= 1 && e.lines.keys().hasOnly(['deposit','withdrawal','loanInstalment'])
+        && (!('deposit' in e.lines) || initialLine(e.lines.deposit))
+        && (!('withdrawal' in e.lines) || initialLine(e.lines.withdrawal))
+        && (!('loanInstalment' in e.lines) || initialLine(e.lines.loanInstalment))
+        && pairedSession(e);
+    }
+    function sessionChange(before,after) {
+      let path = /databases/$(database)/documents/entries/$(after.lastMutationId);
+      let hadEntry = exists(path);
+      let oldEntry = hadEntry ? get(path).data : {'lines': {}, 'financialRevision': 0};
+      let newEntry = getAfter(path).data;
+      return after.diff(before).affectedKeys().hasOnly(['totalDeposits','totalWithdrawals','totalLoanInstalments','expectedCash','revision','lastMutationId'])
+        && current(before) && after.revision == before.revision + 1
+        && newEntry.entryId == after.lastMutationId && newEntry.sessionId == before.sessionId
+        && newEntry.agentId == before.agentId && newEntry.workday == before.workday
+        && newEntry.financialRevision == after.revision
+        && (!hadEntry || oldEntry.financialRevision != newEntry.financialRevision)
+        && after.totalDeposits == before.totalDeposits + lineAmount(newEntry,'deposit') - lineAmount(oldEntry,'deposit')
+        && after.totalWithdrawals == before.totalWithdrawals + lineAmount(newEntry,'withdrawal') - lineAmount(oldEntry,'withdrawal')
+        && after.totalLoanInstalments == before.totalLoanInstalments + lineAmount(newEntry,'loanInstalment') - lineAmount(oldEntry,'loanInstalment');
+    }
+    function oneLine(old,next,kind) {
+      return kind in old.lines && next.lines.keys() == old.lines.keys()
+        && next.lines.diff(old.lines).affectedKeys().size() == 1
+        && next.lines.diff(old.lines).affectedKeys().hasOnly([kind]);
+    }
+    function changedKind(a,b) {
+      let changed = b.lines.diff(a.lines).affectedKeys();
+      return changed.hasOnly(['deposit']) ? 'deposit' : changed.hasOnly(['withdrawal']) ? 'withdrawal' : 'loanInstalment';
+    }
+    function voidLine(old,next,kind) {
+      let a = old.lines[kind]; let b = next.lines[kind];
+      return oneLine(old,next,kind)
+        && a.state == 'active' && a.recorded == false && b.state == 'voided'
+        && b.keys() == a.keys()
+        && b.diff(a).affectedKeys().hasOnly(['state','voidedBy','voidedAt','voidReason'])
+        && b.voidedBy == request.auth.uid && b.voidedAt == request.time
+        && b.voidReason is string && b.voidReason.size() >= 3 && b.voidReason.size() <= 500;
+    }
+    function agentUpdate(a,b) {
+      return a.agentId == request.auth.uid
+        && b.diff(a).affectedKeys().hasOnly(['lines','financialRevision']) && pairedSession(b)
+        && voidLine(a,b,changedKind(a,b));
+    }
+    function recordingLine(old,next,kind) {
+      let a = old.lines[kind]; let b = next.lines[kind];
+      let key = string(b.recordingRevision);
+      return oneLine(old,next,kind) && a.state == 'active' && b.keys() == a.keys()
+        && b.diff(a).affectedKeys().hasOnly(['recorded','recordedBy','recordedAt','recordingHistory','recordingRevision'])
+        && b.recorded is bool && b.recorded != a.recorded
+        && (b.recorded ? b.recordedBy == request.auth.uid && b.recordedAt == request.time : b.recordedBy == null && b.recordedAt == null)
+        && b.recordingRevision == a.recordingRevision + 1 && b.recordingRevision <= 40
+        && b.recordingHistory is map && !(key in a.recordingHistory)
+        && b.recordingHistory.keys().hasAll(a.recordingHistory.keys())
+        && b.recordingHistory.size() == a.recordingHistory.size() + 1
+        && b.recordingHistory.diff(a.recordingHistory).affectedKeys().hasOnly([key])
+        && b.recordingHistory[key].keys().hasAll(['by','at','recorded'])
+        && b.recordingHistory[key].keys().hasOnly(['by','at','recorded','actorName'])
+        && b.recordingHistory[key].by == request.auth.uid && b.recordingHistory[key].at == request.time
+        && b.recordingHistory[key].recorded == b.recorded
+        && (!('actorName' in b.recordingHistory[key]) || (b.recordingHistory[key].actorName is string && b.recordingHistory[key].actorName.size() > 0 && b.recordingHistory[key].actorName.size() <= 120 && b.recordingHistory[key].actorName == profile().displayName));
+    }
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+    function currentNumber(number) {
+      return number is string && number.size() <= 40 && number.matches('^(LCT|ABC ?)[0-9]+$');
+    }
+    function directoryId(id) {
+      return id is string && (id.matches('^[0-9]{1,32}$') || id.matches('^acct_[0-9]{1,40}$') || currentNumber(id));
+    }
+    function accountNumber(number) {
+      return number is string && (number.matches('^[0-9]{1,40}$') || currentNumber(number));
+    }
+    function validMember(m, id) {
+      return m.keys().hasAll(['memberId','accountNumber','uniqueNumber','fullName','searchName','active','updatedAt'])
+        && m.keys().hasOnly(['memberId','accountNumber','uniqueNumber','fullName','searchName','active','updatedAt'])
+        && m.memberId == id && directoryId(id)
+        && m.accountNumber is string && m.accountNumber.matches('^[0-9]{1,40}$')
+        && currentNumber(m.uniqueNumber)
+        && m.fullName is string && m.fullName.size() > 0 && m.fullName.size() <= 120
+        && m.searchName == m.fullName.lower()
+        && m.active is bool && m.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/accountNumbers/$(m.accountNumber)).data.memberId == id;
+    }
+    function validReservation(r, number) {
+      return accountNumber(number)
+        && r.keys().hasAll(['memberId','updatedAt']) && r.keys().hasOnly(['memberId','updatedAt'])
+        && directoryId(r.memberId) && r.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/members/$(r.memberId)).data.accountNumber == number;
+    }
+    match /members/{id} {
+      allow read: if active() && (role('admin') || resource.data.active == true);
+      allow create: if role('admin') && id == 'acct_' + request.resource.data.accountNumber && validMember(request.resource.data, id);
+      allow update: if role('admin') && validMember(request.resource.data, id)
+        && (!('uniqueNumber' in resource.data) || request.resource.data.uniqueNumber == resource.data.uniqueNumber)
+        && (request.resource.data.accountNumber == resource.data.accountNumber || (!('uniqueNumber' in resource.data) && currentNumber(resource.data.accountNumber) && request.resource.data.uniqueNumber == resource.data.accountNumber));
+      allow delete: if false;
+    }
+    match /accountNumbers/{number} {
+      allow read: if role('admin');
+      allow create: if role('admin') && validReservation(request.resource.data, number);
+      allow update, delete: if false;
+    }
+    match /sessions/{id} {
+      allow read: if role('viewer') || (role('agent') && (resource == null ? id == request.auth.uid + '_' + dayString(request.time + duration.value(1,'h')) : resource.data.agentId == request.auth.uid));
+      allow create: if role('agent') && sessionValid(request.resource.data,id)
+        && request.resource.data.startsAt == currentStart() && current(request.resource.data)
+        && request.resource.data.createdAt == request.time && request.resource.data.revision == 0
+        && request.resource.data.lastMutationId == '' && request.resource.data.totalDeposits == 0
+        && request.resource.data.totalWithdrawals == 0 && request.resource.data.totalLoanInstalments == 0;
+      allow update: if role('agent') && sessionValid(request.resource.data,id) && sessionChange(resource.data,request.resource.data);
+      allow delete: if false;
+    }
+    match /entries/{id} {
+      allow read: if role('viewer') || (role('agent') && (resource == null || resource.data.agentId == request.auth.uid));
+      allow create: if role('agent') && entryCreate(request.resource.data,id);
+      allow update: if (role('agent') && agentUpdate(resource.data,request.resource.data))
+        || (role('viewer') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lines'])
+          && recordingLine(resource.data,request.resource.data,changedKind(resource.data,request.resource.data)));
+      allow delete: if false;
+    }
+  }
+}

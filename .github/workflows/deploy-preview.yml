@@ -1,0 +1,110 @@
+name: Deploy PR preview
+on:
+  pull_request_target:
+    branches: [develop, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: preview-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    if: github.repository == 'Luleherll/lct-collect' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      pull-requests: read
+    outputs:
+      run-id: ${{ steps.wait.outputs.run-id }}
+    steps:
+      # Untrusted code builds in normal pull_request CI, never in this workflow.
+      - name: Wait for this PR commit to pass CI
+        id: wait
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const expected = context.payload.pull_request.head.sha;
+            for (let i = 0; i < 90; i++) {
+              const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
+              if (pr.state !== 'open' || pr.head.sha !== expected) {
+                core.notice('PR closed or superseded; no preview deployment.');
+                return;
+              }
+              const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: 'ci.yml', event: 'pull_request', head_sha: expected, per_page: 20});
+              const run = data.workflow_runs.find(r => r.head_repository.full_name === context.payload.repository.full_name && r.pull_requests.some(p => p.number === pr.number));
+              if (run?.status === 'completed') {
+                if (run.conclusion !== 'success') {
+                  core.setFailed('CI must pass before publishing this preview.');
+                  return;
+                }
+                core.setOutput('run-id', String(run.id));
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            core.setFailed('Timed out waiting for this PR commit to pass CI.');
+  deploy:
+    needs: ci
+    if: needs.ci.outputs.run-id != ''
+    runs-on: ubuntu-latest
+    environment: preview
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Verify the PR is still current
+        id: current
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: context.issue.number});
+            core.setOutput('eligible', pr.state === 'open' && pr.head.repo.full_name === context.payload.repository.full_name && pr.head.sha === context.payload.pull_request.head.sha);
+      # Privileged jobs check out only trusted base code and never run PR scripts.
+      - uses: actions/checkout@v4
+        if: steps.current.outputs.eligible == 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.current.outputs.eligible == 'true'
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        if: steps.current.outputs.eligible == 'true'
+        with:
+          name: pr-preview-${{ github.event.pull_request.number }}
+          path: preview-dist/
+          run-id: ${{ needs.ci.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Authenticate preview Hosting identity
+        if: steps.current.outputs.eligible == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: lct-collect-staging
+          workload_identity_provider: projects/679421917255/locations/global/workloadIdentityPools/lct-github-preview/providers/github
+          service_account: lct-github-preview@lct-collect-staging.iam.gserviceaccount.com
+      - name: Publish static PR preview
+        id: hosting
+        if: steps.current.outputs.eligible == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/deploy-preview.mjs
+      - name: Update the PR preview link
+        if: steps.current.outputs.eligible == 'true'
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.hosting.outputs.url }}
+          PREVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const marker = '<!-- lct-collect-preview -->';
+            const body = [marker, `Preview: ${process.env.PREVIEW_URL}`, '', `Source: ${process.env.PREVIEW_HEAD_SHA}. Expires after seven days without an update. Uses staging data; no database rules or production deployment.`, '', 'Published after CI passed.'].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {...context.repo, issue_number: context.issue.number, per_page: 100});
+            const previous = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.includes(marker));
+            if (previous) await github.rest.issues.updateComment({...context.repo, comment_id: previous.id, body});
+            else await github.rest.issues.createComment({...context.repo, issue_number: context.issue.number, body});

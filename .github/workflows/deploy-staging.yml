@@ -1,0 +1,56 @@
+name: Deploy staging
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.repository == 'Luleherll/lct-collect' && (github.ref == 'refs/heads/develop' || (github.ref == 'refs/heads/main' && github.event_name != 'push'))
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: lct-staging
+      cancel-in-progress: false
+    env:
+      PUBLIC_APP_ENV: staging
+      FIREBASE_PROJECT_ID: lct-collect-staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || 'develop' }}
+          persist-credentials: false
+      - name: Record deployed source
+        run: git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Load public staging configuration
+        run: cp .env.example .env
+      - name: Verify environment separation
+        run: node scripts/check-env.mjs
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:ci
+      - run: npm run build
+        env:
+          ASTRO_TELEMETRY_DISABLED: '1'
+      - name: Authenticate with short-lived GitHub identity
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: lct-collect-staging
+          workload_identity_provider: projects/679421917255/locations/global/workloadIdentityPools/lct-github-staging/providers/github
+          service_account: lct-github-staging@lct-collect-staging.iam.gserviceaccount.com
+      - name: Deploy Firestore rules and indexes
+        run: npx -y firebase-tools@15.34.1 deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+      - name: Deploy permanent staging site
+        run: npx -y firebase-tools@15.34.1 deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive
