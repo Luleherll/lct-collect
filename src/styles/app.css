@@ -2922,3 +2922,9 @@ textarea:hover:not(:disabled) {
     height: 16px;
   }
 }
+@media (max-width: 360px) {
+  .header-upload {
+    padding-inline: 5px;
+    gap: 4px;
+  }
+}
