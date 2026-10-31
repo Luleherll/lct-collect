@@ -9,6 +9,19 @@ async function login(page: Page, role = 'agent') {
   await page.getByPlaceholder('Your password').fill('CollectDemo123!');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.waitForURL(role === 'agent' ? '**/agent/' : `**/${role}/`);
+  await expect(page.locator('#main-content')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+}
+async function menu(page: Page, label: string) {
+  const trigger = page.getByRole('button', {
+    name: 'More actions',
+    exact: true,
+  });
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true')
+    await trigger.click();
+  await page.getByRole('menuitem', { name: label, exact: true }).click();
 }
 async function select(page: Page, id = '003') {
   await page.getByLabel('Search members', { exact: true }).fill(`LCT${id}`);
@@ -56,7 +69,7 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await page.getByRole('link', { name: 'Skip to content' }).focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('#main-content')).toBeFocused();
-  await page.getByRole('link', { name: 'History', exact: true }).click();
+  await menu(page, 'History');
   await expect(page.getByRole('dialog')).toContainText('Discard this entry');
   await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
   await page.getByLabel('Clear search members').click();
@@ -69,7 +82,7 @@ test('agent validates, protects drafts, saves through real operations, and voids
   await expect(
     page.getByRole('status', { name: 'Saved entry receipt' }),
   ).toContainText('21,007');
-  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await menu(page, 'Recent entries');
   const row = page.locator('.entry-row').filter({ hasText: '21,007' }).first();
   await row.getByRole('button', { name: 'View Deposit details' }).click();
   await page.getByLabel('Reason for voiding').fill('Browser test correction');
@@ -356,7 +369,7 @@ test('long identities reflow and collection, review, history and office share th
   await page
     .getByRole('button', { name: 'Discard entry', exact: true })
     .click();
-  await page.getByRole('link', { name: 'History', exact: true }).click();
+  await menu(page, 'History');
   await expect(
     page.getByRole('heading', { name: 'Recent workdays' }),
   ).toBeVisible();
@@ -389,8 +402,8 @@ test('compact collection fits a mobile viewport and keeps navigation mounted wit
   const names = await page
     .locator('nav[aria-label="Main navigation"] a')
     .allTextContents();
-  expect(names.map((n) => n.trim())).toEqual(['Recent entries', 'History']);
-  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  expect(names.map((n) => n.trim())).toEqual(['Notes']);
+  await menu(page, 'Recent entries');
   expect(
     await page.evaluate(
       () => (window as Window & { mountedMarker?: boolean }).mountedMarker,
@@ -414,7 +427,7 @@ test('compact collection fits a mobile viewport and keeps navigation mounted wit
   await expect(
     page.getByRole('heading', { name: 'Expected cash' }),
   ).toBeVisible();
-  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await menu(page, 'Recent entries');
   await expect(page.locator('.entry-row').first()).toBeVisible();
   await page.goBack();
   await expect(
@@ -480,7 +493,7 @@ test('automatic record cache survives reload while the database is unavailable',
   page,
 }) => {
   await login(page);
-  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await menu(page, 'Recent entries');
   await expect(page.locator('.entry-row').first()).toBeVisible();
   await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
   await page.reload();
@@ -496,56 +509,96 @@ test('automatic record cache survives reload while the database is unavailable',
   ).toBeVisible();
 });
 
-test('member search expands distinct accounts and ABC groups have a Group chip', async ({
+test('multi-account members select in one tap and save mixed account types with a note', async ({
   page,
+  browser,
 }) => {
   await login(page);
   await page.getByLabel('Search members', { exact: true }).fill('LCT006');
-  await expect(page.locator('.member-result')).toHaveCount(1);
-  await expect(page.locator('.member-result .account-choice')).toHaveCount(2);
-  await page
-    .getByRole('button', {
-      name: 'Select account 000401001008 for Newer reviewed name',
-      exact: true,
-    })
-    .click();
+  await expect(page.locator('.find-card .multi-account')).toHaveCount(1);
+  await expect(page.locator('.find-card .account-choice')).toHaveCount(0);
+  await page.locator('.multi-account').click();
   await expect(page.locator('.entry-card .account')).toContainText(
-    '000401001008',
+    '2 accounts',
   );
-  await expect(page.locator('.entry-card .account')).toContainText('LCT006');
+  await expect(page.locator('#deposit')).toBeDisabled();
+  await expect(page.locator('#loanInstalment')).toBeDisabled();
+  await page.getByLabel('Deposit account type').selectOption('saving');
+  await expect(page.locator('#deposit')).toBeEnabled();
+  await expect(page.locator('#loanInstalment')).toBeDisabled();
   await page.locator('#deposit').fill('33008');
+  await page.getByLabel('Loan instalment account type').selectOption('fixed');
+  await page.locator('#loanInstalment').fill('1000');
+  await page
+    .getByLabel('Notes Optional', { exact: true })
+    .fill('Bring the passbook next visit');
+  await page.getByLabel('Deposit account type').selectOption('');
+  await expect(page.locator('#deposit')).toBeDisabled();
+  await expect(page.locator('#deposit')).toHaveValue('');
+  await page.getByLabel('Deposit account type').selectOption('saving');
+  await page.locator('#deposit').fill('33008');
+  await page.setViewportSize({ width: 320, height: 740 });
+  await noOverflow(page);
+  const brandRight = await page
+    .locator('.brand-link')
+    .evaluate((el) => el.getBoundingClientRect().right);
+  const navLeft = await page
+    .locator('nav[aria-label="Main navigation"]')
+    .evaluate((el) => el.getBoundingClientRect().left);
+  expect(brandRight).toBeLessThanOrEqual(navLeft);
+  await page.screenshot({
+    path: join(evidence, 'multi-account-entry-320.png'),
+  });
+  await page.setViewportSize({ width: 390, height: 740 });
+  await page.screenshot({
+    path: join(evidence, 'multi-account-entry-390.png'),
+  });
+  await page.getByLabel('Loan instalment account type').selectOption('fixed');
   await page.getByRole('button', { name: 'Review entry', exact: true }).click();
-  await expect(page.getByRole('dialog')).toContainText('000401001008');
-  await expect(page.getByRole('dialog')).toContainText('LCT006');
+  await expect(page.getByRole('dialog')).toContainText('Deposit · Saving');
+  await expect(page.getByRole('dialog')).toContainText(
+    'Loan instalment · Fixed',
+  );
+  await expect(page.getByRole('dialog')).toContainText(
+    'Bring the passbook next visit',
+  );
   await page.getByRole('button', { name: 'Confirm & save' }).click();
   await expect(
     page.getByRole('status', { name: 'Saved entry receipt' }),
-  ).toContainText('000401001008');
-  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  ).toContainText('Saving');
+  await menu(page, 'Recent entries');
   const saved = page
     .locator('.entry-row')
     .filter({ hasText: '33,008' })
     .first();
-  await expect(saved).toContainText('000401001008');
+  await expect(saved).toContainText('Saving');
+  await expect(saved).not.toContainText('000401001008');
+  await saved.locator('.entry-identity').click();
+  await expect(page.getByRole('dialog')).toContainText(
+    'Bring the passbook next visit',
+  );
+  await page.keyboard.press('Escape');
+  const viewerContext = await browser.newContext();
+  const viewer = await viewerContext.newPage();
+  await login(viewer, 'viewer');
+  await viewer.getByLabel('Search this page', { exact: true }).fill('LCT006');
+  const row = viewer
+    .locator('.entry-row')
+    .filter({ hasText: '33,008' })
+    .first();
+  await expect(row).toContainText('Saving');
+  await row.locator('.entry-identity').click();
+  await expect(viewer.getByRole('dialog')).toContainText(
+    'Bring the passbook next visit',
+  );
+  await viewerContext.close();
   await page.getByRole('link', { name: 'Back to collection' }).click();
   await page.getByLabel('Search members', { exact: true }).fill('ABC2');
   await expect(page.locator('.find-card .group-chip')).toHaveText('Group');
-  await expect(page.locator('.find-card .account-choice')).toHaveCount(2);
-  const summary = page.locator('.find-card summary');
-  await summary.focus();
-  await summary.press('Space');
-  await expect(page.locator('.find-card details')).toHaveJSProperty(
-    'open',
-    false,
-  );
-  await summary.press('Enter');
-  await expect(page.locator('.find-card details')).toHaveJSProperty(
-    'open',
-    true,
-  );
+  await expect(page.locator('.find-card .multi-account')).toHaveCount(1);
+  await noOverflow(page);
   await page.screenshot({
     path: join(evidence, 'group-member-accounts-mobile.png'),
-    fullPage: false,
   });
 });
 
@@ -815,7 +868,7 @@ test('agent shows five compact workdays and pages every line without losing spli
     await expect(memberPages).toContainText('51–100');
     await expect(page.locator('.find-card .member-result')).toHaveCount(50);
     await page.getByLabel('Clear search members').click();
-    await page.getByRole('link', { name: 'History', exact: true }).click();
+    await menu(page, 'History');
     await expect(page.locator('.session-card')).toHaveCount(5);
     await expect(page.locator('.session-list')).toContainText('7 Feb 2020');
     await expect(page.locator('.session-list')).not.toContainText('3 Feb 2020');
@@ -983,19 +1036,21 @@ test('minimal directory shows one account directly and active navigation is anno
   await expect(result).toContainText('000401001003');
   await expect(result.locator('summary')).toHaveCount(0);
   await noOverflow(page);
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await menu(page, 'Sign out');
   await page.waitForURL('**/login/');
   await login(page);
-  await page.getByRole('link', { name: 'Recent entries', exact: true }).click();
+  await menu(page, 'Recent entries');
+  await page.getByRole('button', { name: 'More actions' }).click();
   await expect(
-    page.getByRole('link', { name: 'Recent entries', exact: true }),
+    page.getByRole('menuitem', { name: 'Recent entries', exact: true }),
   ).toHaveAttribute('aria-current', 'page');
-  await page.getByRole('link', { name: 'History', exact: true }).click();
+  await menu(page, 'History');
+  await page.getByRole('button', { name: 'More actions' }).click();
   await expect(
-    page.getByRole('link', { name: 'History', exact: true }),
+    page.getByRole('menuitem', { name: 'History', exact: true }),
   ).toHaveAttribute('aria-current', 'page');
   await expect(
-    page.getByRole('link', { name: 'Recent entries', exact: true }),
+    page.getByRole('menuitem', { name: 'Recent entries', exact: true }),
   ).not.toHaveAttribute('aria-current', 'page');
 });
 
@@ -1032,12 +1087,10 @@ for (const width of [320, 1280]) {
           .getByRole('button', { name: 'Back / edit', exact: true })
           .click();
         await page.locator('#deposit').fill('');
-        await page
-          .getByRole('link', { name: 'Recent entries', exact: true })
-          .click();
+        await menu(page, 'Recent entries');
         await expect(page.locator('.loading-overlay')).toHaveCount(0);
         await audit('Recent entries');
-        await page.getByRole('link', { name: 'History', exact: true }).click();
+        await menu(page, 'History');
         await expect(page.locator('.compact-session').first()).toBeVisible();
         await audit('Workdays');
       } else if (role === 'viewer') {
@@ -1095,4 +1148,151 @@ test('owner initial connection uses overlay then a compact offline fallback', as
     page.locator('.directory-list .member-result').first(),
   ).toBeVisible();
   await noOverflow(page);
+});
+
+test('private notes add inline, protect drafts, open in a popup and remain cached offline', async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await login(page);
+  await page.getByRole('link', { name: 'Notes', exact: true }).click();
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await page
+    .getByLabel('New note', { exact: true })
+    .fill('Remember the receipt book');
+  await menu(page, 'History');
+  await expect(page.getByRole('dialog')).toContainText('not been saved');
+  await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
+  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(
+    page.getByRole('status', { name: 'Activity update' }),
+  ).toContainText('Note added');
+  await expect(page.getByLabel('New note', { exact: true })).toHaveValue('');
+  await page
+    .getByRole('button', { name: /Remember the receipt book/ })
+    .first()
+    .click();
+  await expect(page.getByRole('dialog')).toContainText(
+    'Remember the receipt book',
+  );
+  await page.keyboard.press('Escape');
+  await noOverflow(page);
+  const audit = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(audit.violations).toEqual([]);
+  await page.screenshot({ path: join(evidence, 'notes-mobile.png') });
+  await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
+  await page.reload();
+  await expect(page.locator('.loading-overlay')).toBeHidden({ timeout: 12000 });
+  await expect(page.locator('.note-row').first()).toBeVisible();
+  await context.setOffline(true);
+  await expect(
+    page.getByRole('button', { name: 'Add note', exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator('.compact-connection')).toContainText('offline');
+});
+
+test('notes paginate exactly fifty at a time without an empty final page', async ({
+  page,
+}) => {
+  process.env.FIRESTORE_EMULATOR_HOST ??= '127.0.0.1:8080';
+  if (
+    !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(
+      process.env.FIRESTORE_EMULATOR_HOST,
+    )
+  )
+    throw new Error('Local emulator only');
+  const { initializeApp, deleteApp } = await import('firebase-admin/app');
+  const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
+  const app = initializeApp({ projectId: 'demo-lct-collect' }, 'notes-pages');
+  const database = getFirestore(app);
+  const existing = await database.collection('users/demo-agent/notes').get();
+  const batch = database.batch();
+  existing.docs.forEach((d) => batch.delete(d.ref));
+  for (let i = 0; i < 100; i++) {
+    const noteId = `note_fixture_${i.toString().padStart(3, '0')}`;
+    batch.set(database.doc(`users/demo-agent/notes/${noteId}`), {
+      noteId,
+      body: `Private note ${i}`,
+      createdAt: Timestamp.fromMillis(1600000000000 + i * 1000),
+    });
+  }
+  await batch.commit();
+  await deleteApp(app);
+  await login(page);
+  await page.getByRole('link', { name: 'Notes', exact: true }).click();
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await expect(page.locator('.note-row')).toHaveCount(50);
+  const pages = page.getByRole('navigation', { name: 'Note pages' });
+  await pages.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(pages).toContainText('Page 2');
+  await expect(page.locator('.note-row')).toHaveCount(50);
+  await expect(
+    pages.getByRole('button', { name: 'Next', exact: true }),
+  ).toBeDisabled();
+  await pages.getByRole('button', { name: 'Previous', exact: true }).click();
+  await expect(pages).toContainText('Page 1');
+});
+
+test('equal-width search rows, stable account controls and accessible header menu', async ({
+  page,
+}) => {
+  await login(page);
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 740 });
+    await page.getByLabel('Search members', { exact: true }).fill('LCT00');
+    const single = page.locator('.find-card .single-account').first(),
+      multi = page.locator('.find-card .multi-account').first();
+    await expect(single).toBeVisible();
+    await expect(multi).toBeVisible();
+    const first = await single.boundingBox(),
+      second = await multi.boundingBox();
+    expect(Math.abs(first!.width - second!.width)).toBeLessThanOrEqual(1);
+    await noOverflow(page);
+  }
+  await page.locator('.find-card .single-account').first().click();
+  await expect(page.getByLabel('Deposit account type')).toBeDisabled();
+  await expect(page.getByLabel('Withdrawal account type')).toBeDisabled();
+  await expect(page.getByLabel('Loan instalment account type')).toBeDisabled();
+  await expect(page.locator('#deposit')).toBeEnabled();
+  await expect(page.locator('footer')).toHaveCount(0);
+  const more = page.getByRole('button', { name: 'More actions', exact: true });
+  await more.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(
+    page.getByRole('menuitem', { name: 'Recent entries', exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(
+    page.getByRole('menuitem', { name: 'History', exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(
+    page.getByRole('menuitem', { name: 'Sign out', exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(more).toBeFocused();
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await more.click();
+  await noOverflow(page);
+  const audit = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(audit.violations).toEqual([]);
+  await page.screenshot({ path: join(evidence, 'compact-header-menu.png') });
+  await page.getByRole('heading', { name: 'New entry', exact: true }).click();
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await page.locator('#entry-note').fill('Unsaved collection note');
+  await menu(page, 'Sign out');
+  await expect(page.getByRole('dialog')).toContainText('not been saved');
+  await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
+  await expect(more).toBeFocused();
+  await expect(page.locator('#entry-note')).toHaveValue(
+    'Unsaved collection note',
+  );
+  await page.locator('#entry-note').fill('');
+  await menu(page, 'Sign out');
+  await page.waitForURL('**/login/');
 });

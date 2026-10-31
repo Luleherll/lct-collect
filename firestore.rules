@@ -2,6 +2,12 @@
 // shared LCT member / ABC group identifier; accountNumber is the actual numeric
 // Ssentezo account. Existing record keys and financial snapshots are retained.
 // accountNumbers permanently reserves each numeric account to its record.
+// Type-selected entries: memberId is an internal directory anchor, otherAccountId
+// is a distinct active account of that same member; accountNumberSnapshot is empty.
+// Each line stores fixed/saving intent; the viewer chooses the actual account in Ssentezo.
+// Entry note: optional immutable plain text, max 2000 chars.
+// users/{uid}/notes/{id}: noteId, body (1..2000 chars), server createdAt;
+// active agents can create/read their own notes only. No update/delete.
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -32,9 +38,10 @@ service cloud.firestore {
         && integer(s.revision,9000000000000) && s.lastMutationId is string && s.lastMutationId.size() <= 100
         && s.createdAt is timestamp;
     }
-    function initialLine(l) {
+    function initialLine(l, typed) {
       return l.keys().hasAll(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory'])
-        && l.keys().hasOnly(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory'])
+        && l.keys().hasOnly(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory','accountType'])
+        && (typed ? ('accountType' in l && l.accountType in ['fixed','saving']) : !('accountType' in l))
         && integer(l.amount,100000000) && l.amount > 0 && l.state == 'active' && l.recorded == false
         && l.recordedBy == null && l.recordedAt == null && l.voidedBy == null && l.voidedAt == null
         && l.voidReason == '' && l.recordingRevision == 0 && l.recordingHistory == {};
@@ -46,23 +53,40 @@ service cloud.firestore {
         && after.revision == before.revision + 1 && after.lastMutationId == e.entryId
         && e.financialRevision == after.revision;
     }
+    function validAccountSelection(e,m) {
+      let typed = 'accountSelection' in e && e.accountSelection == 'type';
+      let other = typed ? get(/databases/$(database)/documents/members/$(e.otherAccountId)).data : m;
+      return typed
+        ? (e.accountNumberSnapshot == '' && e.otherAccountId is string && e.otherAccountId.size() <= 100
+          && e.otherAccountId != e.memberId && other.active == true
+          && 'uniqueNumber' in m && 'uniqueNumberSnapshot' in e && e.uniqueNumberSnapshot == m.uniqueNumber
+          && other.uniqueNumber == m.uniqueNumber && other.fullName == m.fullName)
+        : (!('accountSelection' in e) && !('otherAccountId' in e) && e.accountNumberSnapshot == m.accountNumber);
+    }
+    function validNote(n,id) {
+      return id.matches('^[A-Za-z0-9_-]{8,100}$')
+        && n.keys().hasAll(['noteId','body','createdAt']) && n.keys().hasOnly(['noteId','body','createdAt'])
+        && n.noteId == id && n.body is string && n.body.size() > 0 && n.body.size() <= 2000
+        && n.createdAt == request.time;
+    }
     function entryCreate(e,id) {
       let m = get(/databases/$(database)/documents/members/$(e.memberId)).data;
       return e.keys().hasAll(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines'])
-        && e.keys().hasOnly(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines','uniqueNumberSnapshot'])
+        && e.keys().hasOnly(['entryId','sessionId','workday','agentId','agentNameSnapshot','memberId','accountNumberSnapshot','memberNameSnapshot','createdAt','financialRevision','lines','uniqueNumberSnapshot','accountSelection','otherAccountId','note'])
         && e.entryId == id && id.matches('^[A-Za-z0-9_-]{8,100}$')
         && e.sessionId is string && e.workday is string
         && e.agentId == request.auth.uid && e.agentNameSnapshot is string
         && e.agentNameSnapshot.size() > 0 && e.agentNameSnapshot.size() <= 120
         && e.agentNameSnapshot == profile().displayName
         && e.memberId == m.memberId && m.active == true
-        && e.accountNumberSnapshot == m.accountNumber && e.memberNameSnapshot == m.fullName
+        && validAccountSelection(e,m) && e.memberNameSnapshot == m.fullName
+        && (!('note' in e) || (e.note is string && e.note.size() > 0 && e.note.size() <= 2000))
         && (!('uniqueNumberSnapshot' in e) || ('uniqueNumber' in m && e.uniqueNumberSnapshot == m.uniqueNumber))
         && e.createdAt == request.time && e.lines is map
         && e.lines.keys().size() >= 1 && e.lines.keys().hasOnly(['deposit','withdrawal','loanInstalment'])
-        && (!('deposit' in e.lines) || initialLine(e.lines.deposit))
-        && (!('withdrawal' in e.lines) || initialLine(e.lines.withdrawal))
-        && (!('loanInstalment' in e.lines) || initialLine(e.lines.loanInstalment))
+        && (!('deposit' in e.lines) || initialLine(e.lines.deposit, 'accountSelection' in e))
+        && (!('withdrawal' in e.lines) || initialLine(e.lines.withdrawal, 'accountSelection' in e))
+        && (!('loanInstalment' in e.lines) || initialLine(e.lines.loanInstalment, 'accountSelection' in e))
         && pairedSession(e);
     }
     function sessionChange(before,after) {
@@ -150,6 +174,11 @@ service cloud.firestore {
         && r.keys().hasAll(['memberId','updatedAt']) && r.keys().hasOnly(['memberId','updatedAt'])
         && directoryId(r.memberId) && r.updatedAt == request.time
         && getAfter(/databases/$(database)/documents/members/$(r.memberId)).data.accountNumber == number;
+    }
+    match /users/{uid}/notes/{id} {
+      allow read: if role('agent') && request.auth.uid == uid;
+      allow create: if role('agent') && request.auth.uid == uid && validNote(request.resource.data,id);
+      allow update, delete: if false;
     }
     match /members/{id} {
       allow read: if active() && (role('admin') || resource.data.active == true);

@@ -45,7 +45,15 @@ export interface RecordingEvent {
   at: Timestamp;
   recorded: boolean;
 }
+export type AccountType = 'fixed' | 'saving';
+export const ACCOUNT_TYPES = { fixed: 'Fixed', saving: 'Saving' } as const;
+export interface AgentNote {
+  noteId: string;
+  body: string;
+  createdAt: Timestamp;
+}
 export interface Line {
+  accountType?: AccountType;
   amount: number;
   state: 'active' | 'voided';
   recorded: boolean;
@@ -59,6 +67,10 @@ export interface Line {
 }
 export interface Entry {
   entryId: string;
+  /** Type intent uses internal directory references; no real account is assigned. */
+  accountSelection?: 'type';
+  otherAccountId?: string;
+  note?: string;
   sessionId: string;
   workday: string;
   agentId: string;
@@ -82,3 +94,13 @@ export const flatten = (entries: Entry[]): Row[] =>
       entry.lines[type] ? [{ entry, type, line: entry.lines[type]! }] : [],
     ),
   );
+
+export const entryAccountLabel = (
+  entry: Pick<Entry, 'accountNumberSnapshot' | 'accountSelection'>,
+  line?: { accountType?: AccountType },
+) =>
+  entry.accountSelection === 'type'
+    ? line?.accountType
+      ? ACCOUNT_TYPES[line.accountType]
+      : 'Account type selected per amount'
+    : entry.accountNumberSnapshot;
