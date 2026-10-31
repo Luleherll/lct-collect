@@ -46,6 +46,7 @@ import Icon from './Icon';
 import Pagination from './Pagination';
 import LoadingOverlay from './LoadingOverlay';
 import Brand from './Brand';
+import HeaderMenu from './HeaderMenu';
 import { usePagination } from '../hooks/usePagination';
 import MemberResults from './MemberResults';
 import Notes from './Notes';
@@ -944,26 +945,16 @@ export default function App({ route: initialRoute }: { route: string }) {
                   <Icon name="note" />
                   <span>Notes</span>
                 </a>
-                <a
-                  aria-current={route === 'recent' ? 'page' : undefined}
-                  className={route === 'recent' ? 'active' : ''}
-                  href="/agent/recent/"
-                >
-                  <Icon name="list-ul" />
-                  <span>Recent entries</span>
-                </a>
-                <a
-                  aria-current={route === 'history' ? 'page' : undefined}
-                  className={route === 'history' ? 'active' : ''}
-                  href="/agent/history/"
-                >
-                  <Icon name="clock-history" />
-                  <span>History</span>
-                </a>
               </>
             ) : isAdmin ? (
               <div id="owner-header-actions" />
             ) : null}
+            <HeaderMenu
+              agent={isAgent}
+              route={route}
+              busy={busy}
+              onSignOut={() => protect(() => void signOutNow())}
+            />
           </nav>
         </div>
       </header>
@@ -1239,11 +1230,12 @@ export default function App({ route: initialRoute }: { route: string }) {
                       review();
                     }}
                   >
-                    {otherAccountId && (
-                      <p className="amount-currency muted">
-                        Amounts in UGX · choose an account type per amount
-                      </p>
-                    )}
+                    <p className="amount-currency muted">
+                      Amounts in UGX
+                      {otherAccountId
+                        ? ' · choose an account type per amount'
+                        : ''}
+                    </p>
                     {TYPES.map((t) => (
                       <div className="amount-row" key={t}>
                         <label htmlFor={t}>
@@ -1257,34 +1249,32 @@ export default function App({ route: initialRoute }: { route: string }) {
                           </span>
                         </label>
                         <div className="currency-input">
-                          {otherAccountId ? (
-                            <select
-                              id={`${t}-account-type`}
-                              aria-invalid={!!fieldErrors[t]}
-                              aria-describedby={
-                                fieldErrors[t] ? `${t}-error` : undefined
-                              }
-                              aria-label={`${LABELS[t]} account type`}
-                              value={accountTypes[t] ?? ''}
-                              disabled={busy || uncertain}
-                              onChange={(e) => {
-                                setAccountTypes((v) => ({
-                                  ...v,
-                                  [t]: e.target.value as AccountType,
-                                }));
-                                setFieldErrors((v) => ({
-                                  ...v,
-                                  [t]: undefined,
-                                }));
-                              }}
-                            >
-                              <option value="">Account type</option>
-                              <option value="fixed">Fixed</option>
-                              <option value="saving">Saving</option>
-                            </select>
-                          ) : (
-                            <span>UGX</span>
-                          )}
+                          <select
+                            id={`${t}-account-type`}
+                            aria-invalid={!!fieldErrors[t]}
+                            aria-describedby={
+                              fieldErrors[t] ? `${t}-error` : undefined
+                            }
+                            aria-label={`${LABELS[t]} account type`}
+                            value={accountTypes[t] ?? ''}
+                            disabled={!otherAccountId || busy || uncertain}
+                            onChange={(e) => {
+                              if (!e.target.value)
+                                setValues((v) => ({ ...v, [t]: '' }));
+                              setAccountTypes((v) => ({
+                                ...v,
+                                [t]: e.target.value as AccountType,
+                              }));
+                              setFieldErrors((v) => ({
+                                ...v,
+                                [t]: undefined,
+                              }));
+                            }}
+                          >
+                            <option value="">Account type</option>
+                            <option value="fixed">Fixed</option>
+                            <option value="saving">Saving</option>
+                          </select>
                           <input
                             id={t}
                             ref={t === 'deposit' ? depositRef : undefined}
@@ -1298,7 +1288,12 @@ export default function App({ route: initialRoute }: { route: string }) {
                             autoComplete="off"
                             aria-label={`${LABELS[t]} in UGX`}
                             placeholder="0"
-                            disabled={!member || busy || uncertain}
+                            disabled={
+                              !member ||
+                              busy ||
+                              uncertain ||
+                              (!!otherAccountId && !accountTypes[t])
+                            }
                             value={values[t]}
                             onChange={(e) => {
                               const text = e.currentTarget.value;
@@ -1589,24 +1584,6 @@ export default function App({ route: initialRoute }: { route: string }) {
             />
           </Suspense>
         )}
-        <footer>
-          <span>
-            {profile.role === 'admin'
-              ? 'Owner'
-              : profile.role === 'viewer'
-                ? 'Viewer'
-                : 'Agent'}{' '}
-            · {profile.username}
-          </span>
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={() => protect(() => void signOutNow())}
-          >
-            <Icon name="box-arrow-right" />
-            Sign out
-          </button>
-        </footer>
       </main>
       {guard && (
         <Modal title={guard.title} onClose={() => setGuard(null)}>

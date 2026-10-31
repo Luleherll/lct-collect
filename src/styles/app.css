@@ -2092,7 +2092,7 @@ footer {
 }
 
 /* Office work surface: the register, rather than its controls, owns the space. */
-.member-result.single-account {
+.member-result:is(.single-account, .multi-account) {
   width: 100%;
   display: flex;
   align-items: center;
@@ -2103,13 +2103,15 @@ footer {
   color: var(--navy);
   background: white;
 }
-.member-result.single-account:hover:not(:disabled) {
+.member-result:is(.single-account, .multi-account):hover:not(:disabled) {
   background: var(--pale);
 }
-.member-result.single-account .member-result-identity {
+.member-result:is(.single-account, .multi-account) .member-result-identity {
   min-width: 0;
 }
-.member-result.single-account .member-result-identity span {
+.member-result:is(.single-account, .multi-account)
+  .member-result-identity
+  span {
   overflow-wrap: anywhere;
 }
 .viewer-heading {
@@ -2489,7 +2491,7 @@ textarea:hover:not(:disabled) {
 .button:disabled,
 .icon-button:disabled,
 .account-choice:disabled,
-.single-account:disabled {
+:is(.single-account, .multi-account):disabled {
   opacity: 1;
   background: var(--surface-subtle);
   border-color: var(--line);
@@ -2514,7 +2516,7 @@ textarea:hover:not(:disabled) {
   padding-inline: 8px;
   min-height: 56px;
 }
-.member-result.single-account {
+.member-result:is(.single-account, .multi-account) {
   border: 0;
   border-bottom: 1px solid var(--line);
   border-radius: 0;
@@ -2822,4 +2824,101 @@ textarea:hover:not(:disabled) {
 .note-composer textarea {
   font-weight: 400;
   line-height: 1.4;
+}
+
+/* Header disclosure owns secondary navigation and sign-out for every role. */
+.header-menu {
+  position: relative;
+  flex: none;
+}
+.menu-trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: white;
+  font-size: 11px;
+}
+.menu-trigger:hover,
+.menu-trigger[aria-expanded='true'] {
+  background: #253f5c;
+}
+.menu-panel {
+  position: absolute;
+  z-index: 30;
+  right: 0;
+  top: calc(100% + 6px);
+  width: 208px;
+  max-width: calc(100vw - 24px);
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: 0 6px 18px #192e4926;
+}
+.header-menu .menu-panel [role='menuitem'] {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--navy);
+  background: transparent;
+  text-align: left;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 400;
+}
+.header-menu .menu-panel [role='menuitem']:hover,
+.header-menu .menu-panel [role='menuitem']:focus-visible,
+.header-menu .menu-panel [aria-current='page'] {
+  background: var(--pale);
+  color: var(--navy);
+}
+.header-menu .menu-panel [role='menuitem']:disabled {
+  color: var(--muted);
+  background: var(--surface-subtle);
+}
+.app-header .menu-panel [role='menuitem']:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+.menu-trigger:focus-visible {
+  outline-color: white;
+}
+.page {
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+}
+.currency-input select:disabled {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  opacity: 1;
+}
+.multi-account .member-result-identity {
+  flex: 1;
+}
+
+@media (max-width: 360px) {
+  .header-upload {
+    padding-inline: 8px;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .header-upload .icon {
+    width: 16px;
+    height: 16px;
+  }
 }
