@@ -10,6 +10,7 @@ import { bounds, cash, MAX_RECORDING_EVENTS, workday } from './domain';
 import {
   TYPES,
   type Entry,
+  type AccountType,
   type Line,
   type LineType,
   type Member,
@@ -58,21 +59,36 @@ export async function saveEntry(
   values: Record<LineType, number>,
   uid: string,
   profile: Profile,
+  details: {
+    otherAccountId?: string;
+    accountTypes?: Partial<Record<LineType, AccountType>>;
+    note?: string;
+  } = {},
 ) {
   online();
   const entryRef = doc(db(), 'entries', id),
     sessionRef = doc(db(), 'sessions', sessionId);
   return runTransaction(db(), async (tx) => {
-    const [entrySnap, sessionSnap, memberSnap] = await Promise.all([
+    const [entrySnap, sessionSnap, memberSnap, otherSnap] = await Promise.all([
       tx.get(entryRef),
       tx.get(sessionRef),
       tx.get(doc(db(), 'members', member.memberId)),
+      details.otherAccountId
+        ? tx.get(doc(db(), 'members', details.otherAccountId))
+        : Promise.resolve(null),
     ]);
     if (entrySnap.exists()) {
       const prior = entrySnap.data() as Entry;
       if (
         prior.memberId !== member.memberId ||
         prior.sessionId !== sessionId ||
+        (prior.note ?? '') !== (details.note?.trim() ?? '') ||
+        (prior.otherAccountId ?? '') !== (details.otherAccountId ?? '') ||
+        TYPES.some(
+          (t) =>
+            values[t] > 0 &&
+            prior.lines[t]?.accountType !== details.accountTypes?.[t],
+        ) ||
         TYPES.some((t) => (prior.lines[t]?.amount ?? 0) !== values[t])
       )
         throw new Error(
@@ -91,6 +107,28 @@ export async function saveEntry(
       m.uniqueNumber !== member.uniqueNumber
     )
       throw new Error('This account changed. Select it again before saving.');
+    const note = details.note?.trim() ?? '';
+    if (note.length > 2000)
+      throw new Error('Keep notes within 2,000 characters.');
+    if (details.otherAccountId) {
+      const other = otherSnap?.data() as Member | undefined;
+      if (
+        !other?.active ||
+        other.memberId === m.memberId ||
+        !m.uniqueNumber ||
+        other.uniqueNumber !== m.uniqueNumber ||
+        other.fullName !== m.fullName
+      )
+        throw new Error(
+          'This member’s accounts changed. Select the member again.',
+        );
+      for (const type of TYPES)
+        if (
+          values[type] > 0 &&
+          !['fixed', 'saving'].includes(details.accountTypes?.[type] ?? '')
+        )
+          throw new Error('Select an account type for each amount.');
+    }
     const totalDeposits = s.totalDeposits + values.deposit,
       totalWithdrawals = s.totalWithdrawals + values.withdrawal,
       totalLoanInstalments = s.totalLoanInstalments + values.loanInstalment;
@@ -106,6 +144,9 @@ export async function saveEntry(
       if (values[type] > 0)
         lines[type] = {
           amount: values[type],
+          ...(details.otherAccountId
+            ? { accountType: details.accountTypes![type] }
+            : {}),
           state: 'active',
           recorded: false,
           recordedBy: null,
@@ -123,7 +164,11 @@ export async function saveEntry(
       agentId: uid,
       agentNameSnapshot: profile.displayName,
       memberId: m.memberId,
-      accountNumberSnapshot: m.accountNumber,
+      accountNumberSnapshot: details.otherAccountId ? '' : m.accountNumber,
+      ...(details.otherAccountId
+        ? { accountSelection: 'type', otherAccountId: details.otherAccountId }
+        : {}),
+      ...(note ? { note } : {}),
       ...(m.uniqueNumber ? { uniqueNumberSnapshot: m.uniqueNumber } : {}),
       memberNameSnapshot: m.fullName,
       createdAt: serverTimestamp(),
@@ -227,5 +272,24 @@ export async function setRecorded(
         recorded,
       },
     });
+  });
+}
+
+export async function saveNote(uid: string, id: string, body: string) {
+  online();
+  const text = body.trim();
+  if (!text || text.length > 2000)
+    throw new Error('Enter a note of up to 2,000 characters.');
+  const ref = doc(db(), 'users', uid, 'notes', id);
+  await runTransaction(db(), async (tx) => {
+    const prior = await tx.get(ref);
+    if (prior.exists()) {
+      if (prior.data().body !== text)
+        throw new Error(
+          'This note was already saved. Refresh before adding another.',
+        );
+      return;
+    }
+    tx.set(ref, { noteId: id, body: text, createdAt: serverTimestamp() });
   });
 }

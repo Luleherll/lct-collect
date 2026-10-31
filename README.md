@@ -8,7 +8,8 @@ Mobile-first field collection log for Lusaze Community Traders SACCO. Astro stat
 - Agent opening cash, one session per Uganda operational day (02:00–02:00), member account search, grouped deposits/withdrawals/loan instalments, review, idempotent save and eligible per-line voids.
 - Latest five own workdays and a separate recent entries page; the viewer can select any date. Transaction lists show at most 50 lines per cursor page.
 - Office date register with composable search/type/agent/status filters, independent recording checks and audited undo.
-- Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Search results expand to show the member’s accounts, and agents select one before entering amounts.
+- Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Agent search selects the member directly. Multi-account collections capture Fixed/Saving intent per amount; the viewer determines the actual account manually in Ssentezo. Owner directory results still expand to show real account numbers.
+- Optional entry notes shared with the agent and viewer; private agent notes with inline creation, popup viewing, and 50-note cursor pages.
 - Automatic offline-viewing record cache and a static-only service worker; all application writes use online transactions.
 - Emulator security tests and isolated staging/production workflow definitions.
 
@@ -89,3 +90,5 @@ See [deployment](docs/DEPLOYMENT.md), [recovery](docs/RECOVERY.md), [pilot check
 Do not treat a successful build or emulator run as field acceptance. Browser visual QA, real small-Android checks, staging account verification, and the notebook-parallel pilot are release gates. No Firebase deployment credentials, real member exports or production records belong in this repository.
 
 The mobile refinement and review fixes are tracked in [review resolution](docs/REVIEW_RESOLUTION.md). Visual and interaction contracts are maintained in [DESIGN.md](DESIGN.md) and [UX-CONTRACT.md](UX-CONTRACT.md). Browser tests use 820 synthetic accounts against local emulators only.
+
+See [account types and notes](docs/ACCOUNT_TYPES_AND_NOTES.md) for data compatibility, access and rollout details.

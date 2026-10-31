@@ -1,4 +1,8 @@
-import { matchesAccount, groupAccounts } from '../lib/account';
+import {
+  matchesAccount,
+  groupAccounts,
+  type MemberGroup,
+} from '../lib/account';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, onSnapshot, orderBy, limit, where } from 'firebase/firestore';
@@ -19,6 +23,9 @@ import {
 } from '../lib/domain';
 import {
   LABELS,
+  ACCOUNT_TYPES,
+  entryAccountLabel,
+  type AccountType,
   TYPES,
   type Entry,
   type LineType,
@@ -41,6 +48,8 @@ import LoadingOverlay from './LoadingOverlay';
 import Brand from './Brand';
 import { usePagination } from '../hooks/usePagination';
 import MemberResults from './MemberResults';
+import Notes from './Notes';
+import { usePagedNotes } from '../hooks/usePagedNotes';
 import Modal from './Modal';
 import { Account, Status } from './Account';
 import { usePagedEntries } from '../hooks/usePagedEntries';
@@ -54,6 +63,7 @@ const MemberAdmin = lazy(() => import('./MemberAdmin'));
 const HOME = { agent: '/agent/', viewer: '/viewer/', admin: '/admin/' };
 type Receipt = Pick<
   Entry,
+  | 'accountSelection'
   | 'entryId'
   | 'memberId'
   | 'memberNameSnapshot'
@@ -63,7 +73,9 @@ type Receipt = Pick<
   | 'uniqueNumberSnapshot'
 > & {
   createdAt?: Entry['createdAt'];
-  lines: Partial<Record<LineType, { amount: number }>>;
+  lines: Partial<
+    Record<LineType, { amount: number; accountType?: AccountType }>
+  >;
 };
 const EMPTY_AMOUNTS = { deposit: '', withdrawal: '', loanInstalment: '' };
 export default function App({ route: initialRoute }: { route: string }) {
@@ -94,6 +106,12 @@ export default function App({ route: initialRoute }: { route: string }) {
     loanInstalment: 0,
   });
   const [reviewSessionId, setReviewSessionId] = useState('');
+  const [otherAccountId, setOtherAccountId] = useState('');
+  const [accountTypes, setAccountTypes] = useState<
+    Partial<Record<LineType, AccountType>>
+  >({});
+  const [entryNote, setEntryNote] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
   const pendingId = useRef(''),
     [uncertain, setUncertain] = useState(false);
   const [q, setQ] = useState(''),
@@ -115,7 +133,10 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [markingRow, setMarkingRow] = useState('');
   const [undoRow, setUndoRow] = useState<Row | null>(null);
   const [connectionWaited, setConnectionWaited] = useState(false);
-  const dirty = TYPES.some((t) => values[t].trim() !== '');
+  const dirty =
+    TYPES.some((t) => values[t].trim() !== '') ||
+    !!entryNote.trim() ||
+    (route === 'notes' && !!noteDraft.trim());
   const depositRef = useRef<HTMLInputElement>(null);
   const mutation = useRef(false);
   const allowUnload = useRef(false);
@@ -125,7 +146,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   function protect(
     run: () => void,
     title = 'Discard this entry?',
-    body = 'These amounts have not been saved. Stay to finish the entry, or discard them.',
+    body = 'Your changes have not been saved. Stay to finish, or discard them.',
     label = 'Discard entry',
   ) {
     if (busy || uncertain) {
@@ -144,6 +165,7 @@ export default function App({ route: initialRoute }: { route: string }) {
       '/agent/': 'agent',
       '/agent/recent/': 'recent',
       '/agent/history/': 'history',
+      '/agent/notes/': 'notes',
       '/viewer/': 'viewer',
       '/admin/': 'admin',
       '/login/': 'login',
@@ -161,11 +183,15 @@ export default function App({ route: initialRoute }: { route: string }) {
     setHistoryDay('');
     setError('');
     setModal(null);
+    setEntryNote('');
+    setNoteDraft('');
+    setAccountTypes({});
+    setOtherAccountId('');
     if (next !== 'agent') {
       setMember(null);
       setValues({ ...EMPTY_AMOUNTS });
     }
-    document.title = `${next === 'recent' ? 'Recent entries' : next === 'history' ? 'Session history' : 'LCT Collect'} · LCT Collect`;
+    document.title = `${next === 'recent' ? 'Recent entries' : next === 'history' ? 'Session history' : next === 'notes' ? 'Notes' : 'LCT Collect'} · LCT Collect`;
     window.scrollTo({ top: 0, behavior: 'instant' });
     requestAnimationFrame(() =>
       document.getElementById('main-content')?.focus({ preventScroll: true }),
@@ -204,6 +230,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           '/agent/',
           '/agent/recent/',
           '/agent/history/',
+          '/agent/notes/',
           '/viewer/',
           '/admin/',
           '/login/',
@@ -220,6 +247,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         agent: '/agent/',
         recent: '/agent/recent/',
         history: '/agent/history/',
+        notes: '/agent/notes/',
         viewer: '/viewer/',
         admin: '/admin/',
         login: '/login/',
@@ -291,7 +319,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         setProfile(p);
         const allowed =
           p.role === 'agent'
-            ? ['agent', 'recent', 'history']
+            ? ['agent', 'recent', 'history', 'notes']
             : p.role === 'viewer'
               ? ['viewer']
               : ['admin'];
@@ -373,17 +401,26 @@ export default function App({ route: initialRoute }: { route: string }) {
     memberQuery,
   );
   const session = sessions.data.find((s) => s.workday === today);
-  const cached = isAdmin
-    ? members.cached
-    : isViewer
-      ? entries.cached || sessions.cached
-      : members.cached || sessions.cached || (showingEntries && entries.cached);
+  const notes = usePagedNotes(
+    user?.uid ?? '',
+    authorized && isAgent && route === 'notes',
+  );
+  const cached =
+    route === 'notes'
+      ? notes.cached
+      : isAdmin
+        ? members.cached
+        : isViewer
+          ? entries.cached || sessions.cached
+          : members.cached ||
+            sessions.cached ||
+            (showingEntries && entries.cached);
   const waitingForData = !!(
     authorized &&
     (isAgent || isAdmin) &&
     network &&
     cached &&
-    !(members.error || sessions.error || entries.error)
+    !(members.error || sessions.error || entries.error || notes.error)
   );
   const waitKey = `${user?.uid}/${route}/${entryDay}`;
   useEffect(() => {
@@ -444,6 +481,8 @@ export default function App({ route: initialRoute }: { route: string }) {
       for (const t of TYPES) {
         try {
           parsed[t] = amount(values[t], true);
+          if (otherAccountId && parsed[t] > 0 && !accountTypes[t])
+            errors[t] = 'Choose Fixed or Saving.';
         } catch (e) {
           errors[t] = message(e);
         }
@@ -451,7 +490,13 @@ export default function App({ route: initialRoute }: { route: string }) {
       setFieldErrors(errors);
       const invalid = TYPES.find((t) => errors[t]);
       if (invalid) {
-        document.getElementById(invalid)?.focus();
+        document
+          .getElementById(
+            otherAccountId && parsed[invalid] > 0 && !accountTypes[invalid]
+              ? `${invalid}-account-type`
+              : invalid,
+          )
+          ?.focus();
         return;
       }
       if (!TYPES.some((t) => parsed[t] > 0))
@@ -472,9 +517,30 @@ export default function App({ route: initialRoute }: { route: string }) {
       setError(message(e));
     }
   }
+  function selectGroup(group: MemberGroup) {
+    const run = () => {
+      setValues({ ...EMPTY_AMOUNTS });
+      setFieldErrors({});
+      setEntryNote('');
+      setAccountTypes({});
+      pendingId.current = '';
+      setOtherAccountId(group.accounts[1]?.memberId ?? '');
+      setMember(group.accounts[0]);
+      setMemberQuery('');
+    };
+    protect(
+      run,
+      'Change member?',
+      'Changing members discards the unsaved entry.',
+      'Discard & change member',
+    );
+  }
   function clearForm() {
     if (user) storage.remove('session', `lct-pending-${user.uid}`);
     setMember(null);
+    setOtherAccountId('');
+    setAccountTypes({});
+    setEntryNote('');
     setMemberQuery('');
     setValues({ ...EMPTY_AMOUNTS });
     setFieldErrors({});
@@ -509,6 +575,11 @@ export default function App({ route: initialRoute }: { route: string }) {
         reviewValues,
         user.uid,
         profile,
+        {
+          otherAccountId: otherAccountId || undefined,
+          accountTypes,
+          note: entryNote,
+        },
       );
       storage.remove('session', `lct-pending-${user.uid}`);
       setUncertain(false);
@@ -518,14 +589,20 @@ export default function App({ route: initialRoute }: { route: string }) {
       const savedLines = Object.fromEntries(
         TYPES.filter((t) => reviewValues[t] > 0).map((t) => [
           t,
-          { amount: reviewValues[t], state: 'active', recorded: false },
+          {
+            amount: reviewValues[t],
+            state: 'active',
+            recorded: false,
+            ...(otherAccountId ? { accountType: accountTypes[t] } : {}),
+          },
         ]),
       );
       setReceipt({
         entryId: savedId,
         memberId: member.memberId,
         memberNameSnapshot: member.fullName,
-        accountNumberSnapshot: member.accountNumber,
+        accountNumberSnapshot: otherAccountId ? '' : member.accountNumber,
+        ...(otherAccountId ? { accountSelection: 'type' as const } : {}),
         ...(member.uniqueNumber
           ? { uniqueNumberSnapshot: member.uniqueNumber }
           : {}),
@@ -714,7 +791,7 @@ export default function App({ route: initialRoute }: { route: string }) {
       >
         {viewer && (
           <div className="register-head">
-            <span>Member account</span>
+            <span>Member / account</span>
             <span>Type / agent</span>
             <span>Amount</span>
             <span>Status</span>
@@ -728,11 +805,17 @@ export default function App({ route: initialRoute }: { route: string }) {
           >
             <button
               className="entry-identity"
-              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, account ${row.entry.accountNumberSnapshot}`}
+              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, ${entryAccountLabel(row.entry, row.line)}`}
               onClick={() => showLine(row)}
             >
               <strong>{row.entry.memberNameSnapshot}</strong>
-              <span>{row.entry.accountNumberSnapshot}</span>
+              <span>
+                {row.entry.uniqueNumberSnapshot
+                  ? `${row.entry.uniqueNumberSnapshot} · `
+                  : ''}
+                {entryAccountLabel(row.entry, row.line)}
+                {row.entry.note && ' · Note'}
+              </span>
               <span>
                 {timeLabel(row.entry.createdAt)} <Status row={row} />
               </span>
@@ -838,7 +921,8 @@ export default function App({ route: initialRoute }: { route: string }) {
       </main>
     );
   const headerDay = isViewer ? date : historyDay || today;
-  const queryError = members.error || sessions.error || entries.error;
+  const queryError =
+    members.error || sessions.error || entries.error || notes.error;
   return (
     <>
       <header className="app-header" inert={loadingData}>
@@ -852,6 +936,14 @@ export default function App({ route: initialRoute }: { route: string }) {
           <nav aria-label="Main navigation">
             {isAgent ? (
               <>
+                <a
+                  aria-current={route === 'notes' ? 'page' : undefined}
+                  className={route === 'notes' ? 'active' : ''}
+                  href="/agent/notes/"
+                >
+                  <Icon name="note" />
+                  <span>Notes</span>
+                </a>
                 <a
                   aria-current={route === 'recent' ? 'page' : undefined}
                   className={route === 'recent' ? 'active' : ''}
@@ -966,11 +1058,14 @@ export default function App({ route: initialRoute }: { route: string }) {
             <div>
               <strong>Saved · {receipt.memberNameSnapshot}</strong>
               <span>
-                Account {receipt.accountNumberSnapshot} ·{' '}
+                {receipt.accountSelection === 'type'
+                  ? receipt.uniqueNumberSnapshot
+                  : `Account ${receipt.accountNumberSnapshot}`}{' '}
+                ·{' '}
                 {TYPES.filter((t) => receipt.lines[t])
                   .map(
                     (t) =>
-                      `${LABELS[t]} UGX ${money(receipt.lines[t]!.amount)}`,
+                      `${LABELS[t]}${receipt.lines[t]!.accountType ? ` (${ACCOUNT_TYPES[receipt.lines[t]!.accountType!]})` : ''} UGX ${money(receipt.lines[t]!.amount)}`,
                   )
                   .join(' · ')}
               </span>
@@ -1046,21 +1141,6 @@ export default function App({ route: initialRoute }: { route: string }) {
               </section>
             ) : (
               <>
-                <section
-                  className="cash-summary"
-                  aria-label="Expected physical cash"
-                >
-                  <h1>Expected cash</h1>
-                  <div className="cash-number">
-                    <span>UGX</span>{' '}
-                    <strong>{money(session.expectedCash)}</strong>
-                  </div>
-                  <p>
-                    {cached
-                      ? 'Saved cash estimate'
-                      : `Up to date${lastSync ? ' · ' + lastSync : ''}`}
-                  </p>
-                </section>
                 <section className="card find-card">
                   <h2>Find member</h2>
                   <SearchField
@@ -1076,9 +1156,16 @@ export default function App({ route: initialRoute }: { route: string }) {
                         groups={searchPages.items}
                         searching
                         disabled={uncertain || busy}
+                        onSelectGroup={selectGroup}
                         onSelect={(m) => {
                           const select = () => {
-                            if (member?.memberId !== m.memberId) {
+                            if (
+                              member?.memberId !== m.memberId ||
+                              otherAccountId
+                            ) {
+                              setOtherAccountId('');
+                              setAccountTypes({});
+                              setEntryNote('');
                               setValues({ ...EMPTY_AMOUNTS });
                               setFieldErrors({});
                               pendingId.current = '';
@@ -1086,7 +1173,10 @@ export default function App({ route: initialRoute }: { route: string }) {
                             setMember(m);
                             setMemberQuery('');
                           };
-                          if (member?.memberId === m.memberId) {
+                          if (
+                            member?.memberId === m.memberId &&
+                            !otherAccountId
+                          ) {
                             setMemberQuery('');
                             depositRef.current?.focus();
                           } else
@@ -1125,7 +1215,16 @@ export default function App({ route: initialRoute }: { route: string }) {
                   {member ? (
                     <Account
                       name={member.fullName}
-                      number={member.accountNumber}
+                      number={otherAccountId ? '' : member.accountNumber}
+                      accountCount={
+                        otherAccountId
+                          ? groupAccounts(members.data).find((g) =>
+                              g.accounts.some(
+                                (a) => a.memberId === member.memberId,
+                              ),
+                            )?.accounts.length
+                          : undefined
+                      }
                       memberNumber={member.uniqueNumber}
                     />
                   ) : (
@@ -1140,6 +1239,11 @@ export default function App({ route: initialRoute }: { route: string }) {
                       review();
                     }}
                   >
+                    {otherAccountId && (
+                      <p className="amount-currency muted">
+                        Amounts in UGX · choose an account type per amount
+                      </p>
+                    )}
                     {TYPES.map((t) => (
                       <div className="amount-row" key={t}>
                         <label htmlFor={t}>
@@ -1153,7 +1257,34 @@ export default function App({ route: initialRoute }: { route: string }) {
                           </span>
                         </label>
                         <div className="currency-input">
-                          <span>UGX</span>
+                          {otherAccountId ? (
+                            <select
+                              id={`${t}-account-type`}
+                              aria-invalid={!!fieldErrors[t]}
+                              aria-describedby={
+                                fieldErrors[t] ? `${t}-error` : undefined
+                              }
+                              aria-label={`${LABELS[t]} account type`}
+                              value={accountTypes[t] ?? ''}
+                              disabled={busy || uncertain}
+                              onChange={(e) => {
+                                setAccountTypes((v) => ({
+                                  ...v,
+                                  [t]: e.target.value as AccountType,
+                                }));
+                                setFieldErrors((v) => ({
+                                  ...v,
+                                  [t]: undefined,
+                                }));
+                              }}
+                            >
+                              <option value="">Account type</option>
+                              <option value="fixed">Fixed</option>
+                              <option value="saving">Saving</option>
+                            </select>
+                          ) : (
+                            <span>UGX</span>
+                          )}
                           <input
                             id={t}
                             ref={t === 'deposit' ? depositRef : undefined}
@@ -1205,6 +1336,18 @@ export default function App({ route: initialRoute }: { route: string }) {
                         )}
                       </div>
                     ))}
+                    <label className="entry-note" htmlFor="entry-note">
+                      Notes <span className="muted">Optional</span>
+                      <textarea
+                        id="entry-note"
+                        maxLength={2000}
+                        rows={2}
+                        placeholder="Anything to note about this collection"
+                        value={entryNote}
+                        disabled={!member || busy || uncertain}
+                        onChange={(e) => setEntryNote(e.target.value)}
+                      />
+                    </label>
                     <div className="actions">
                       <button
                         type="button"
@@ -1223,9 +1366,35 @@ export default function App({ route: initialRoute }: { route: string }) {
                     </div>
                   </form>
                 </section>
+                <section
+                  className="cash-summary"
+                  aria-label="Expected physical cash"
+                >
+                  <h1>Expected cash</h1>
+                  <div className="cash-number">
+                    <span>UGX</span>{' '}
+                    <strong>{money(session.expectedCash)}</strong>
+                  </div>
+                  <p>
+                    {cached
+                      ? 'Saved cash estimate'
+                      : `Up to date${lastSync ? ' · ' + lastSync : ''}`}
+                  </p>
+                </section>
               </>
             )}
           </>
+        )}
+        {isAgent && route === 'notes' && (
+          <Notes
+            uid={user.uid}
+            notes={notes}
+            draft={noteDraft}
+            onDraft={setNoteDraft}
+            writable={network && !notes.cached && !busy}
+            busy={busy}
+            action={action}
+          />
         )}
         {isAgent && route === 'recent' && (
           <>
@@ -1498,7 +1667,14 @@ export default function App({ route: initialRoute }: { route: string }) {
         <Modal title="Review entry" onClose={() => !busy && setModal(null)}>
           <Account
             name={member.fullName}
-            number={member.accountNumber}
+            number={otherAccountId ? '' : member.accountNumber}
+            accountCount={
+              otherAccountId
+                ? groupAccounts(members.data).find((g) =>
+                    g.accounts.some((a) => a.memberId === member.memberId),
+                  )?.accounts.length
+                : undefined
+            }
             memberNumber={member.uniqueNumber}
           />
           {error && (
@@ -1506,10 +1682,21 @@ export default function App({ route: initialRoute }: { route: string }) {
               {error}
             </p>
           )}
+          {entryNote.trim() && (
+            <div className="entry-note-preview">
+              <strong>Note</strong>
+              <p className="note-body">{entryNote.trim()}</p>
+            </div>
+          )}
           <dl className="review-lines">
             {TYPES.filter((t) => reviewValues[t] > 0).map((t) => (
               <div key={t}>
-                <dt>{LABELS[t]}</dt>
+                <dt>
+                  {LABELS[t]}
+                  {otherAccountId && accountTypes[t]
+                    ? ` · ${ACCOUNT_TYPES[accountTypes[t]!]}`
+                    : ''}
+                </dt>
                 <dd>UGX {money(reviewValues[t])}</dd>
               </div>
             ))}
@@ -1557,6 +1744,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           <Account
             name={detailRow.entry.memberNameSnapshot}
             number={detailRow.entry.accountNumberSnapshot}
+            accountType={entryAccountLabel(detailRow.entry, detailRow.line)}
             memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <p>
@@ -1606,12 +1794,19 @@ export default function App({ route: initialRoute }: { route: string }) {
           <Account
             name={detailRow.entry.memberNameSnapshot}
             number={detailRow.entry.accountNumberSnapshot}
+            accountType={entryAccountLabel(detailRow.entry, detailRow.line)}
             memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <div className="detail-amount">
             {LABELS[detailRow.type]}
             <strong>UGX {money(detailRow.line.amount)}</strong>
           </div>
+          {detailRow.entry.note && (
+            <section className="entry-note-preview">
+              <strong>Note</strong>
+              <p className="note-body">{detailRow.entry.note}</p>
+            </section>
+          )}
           <Status row={detailRow} />
           <dl>
             <div>
