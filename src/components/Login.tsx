@@ -23,7 +23,7 @@ export default function Login({ notice }: { notice: string }) {
     <div className="login-page">
       <header className="login-brand">
         <Brand />
-        <p>Lusaze Community Traders SACCO</p>
+        <p>Lusaze Community Traders</p>
       </header>
       <main tabIndex={-1} id="main-content" className="login-shell">
         <h1>Welcome back</h1>

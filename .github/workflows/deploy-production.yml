@@ -41,6 +41,8 @@ jobs:
           node scripts/check-env.mjs
           node --env-file=.env -e "if(process.env.PUBLIC_FIREBASE_PROJECT_ID!==process.env.FIREBASE_PROJECT_ID)process.exit(1)"
       - run: npm ci
+      - run: npm ci --prefix functions
+      - run: npm --prefix functions run build
       - run: npm run check
       - run: npm run test:ci
       - run: npm run build
@@ -51,7 +53,13 @@ jobs:
           project_id: lct-collect-prod
           workload_identity_provider: projects/275805072037/locations/global/workloadIdentityPools/lct-github-prod/providers/github
           service_account: lct-github-prod@lct-collect-prod.iam.gserviceaccount.com
+      - name: Verify reminder setup
+        run: |
+          node scripts/check-reminder-env.mjs
+          npx -y firebase-tools@15.34.1 functions:secrets:get REMINDER_SIGNING_KEY --project "$FIREBASE_PROJECT_ID" --non-interactive
       - name: Deploy Firestore rules and indexes
         run: npx -y firebase-tools@15.34.1 deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
+      - name: Deploy reminders backend
+        run: npx -y firebase-tools@15.34.1 deploy --only functions:reminders --project "$FIREBASE_PROJECT_ID" --non-interactive --force
       - name: Deploy production live
         run: npx -y firebase-tools@15.34.1 deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive

@@ -3,10 +3,14 @@ export const Account = ({
   name,
   number,
   memberNumber,
+  accountType,
+  accountCount,
 }: {
   name: string;
   number: string;
   memberNumber?: string;
+  accountType?: string;
+  accountCount?: number;
 }) => (
   <div className="account">
     <strong>{name}</strong>
@@ -18,7 +22,16 @@ export const Account = ({
         )}
       </span>
     )}
-    <span>Account no. {number}</span>
+    {number ? (
+      <span>Account no. {number}</span>
+    ) : (
+      <span>
+        {accountType ??
+          (accountCount
+            ? `${accountCount} accounts`
+            : 'Account type selected per amount')}
+      </span>
+    )}
   </div>
 );
 export const Status = ({ row }: { row: Row }) => (

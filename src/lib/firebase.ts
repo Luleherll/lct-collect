@@ -89,6 +89,8 @@ export function db() {
 if (emulators)
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
 export async function logout() {
+  const { disableReminders } = await import('./notifications');
+  await disableReminders();
   await signOut(auth);
   let cleared = true;
   if (database) {

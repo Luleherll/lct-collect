@@ -748,3 +748,184 @@ describe('roles and immutable audit history', () => {
     );
   });
 });
+
+describe('private notes', () => {
+  const noteId = 'note_00000001';
+  const body = () => ({
+    noteId,
+    body: 'Remember receipt book',
+    createdAt: serverTimestamp(),
+  });
+  it('allows an agent to add and query their notes; forbids other roles, agents and anonymous reads', async () => {
+    await assertSucceeds(
+      setDoc(doc(agent(), 'users', 'agent-a', 'notes', noteId), body()),
+    );
+    await assertSucceeds(
+      getDocs(collection(agent(), 'users', 'agent-a', 'notes')),
+    );
+    for (const db of [
+      viewer(),
+      env.authenticatedContext('agent-b').firestore() as unknown as Firestore,
+      env.authenticatedContext('admin-a').firestore() as unknown as Firestore,
+      env.unauthenticatedContext().firestore() as unknown as Firestore,
+    ]) {
+      await assertFails(getDoc(doc(db, 'users', 'agent-a', 'notes', noteId)));
+      await assertFails(getDocs(collection(db, 'users', 'agent-a', 'notes')));
+      await assertFails(
+        setDoc(doc(db, 'users', 'agent-a', 'notes', 'note_forged01'), {
+          ...body(),
+          noteId: 'note_forged01',
+        }),
+      );
+    }
+    await assertFails(
+      setDoc(doc(agent(), 'users', 'agent-b', 'notes', noteId), body()),
+    );
+  });
+  it.each([
+    { body: '' },
+    { body: 4 },
+    { body: 'x'.repeat(2001) },
+    { noteId: 'spoof' },
+    { createdAt: Timestamp.fromMillis(1) },
+    { extra: true },
+  ])('rejects malformed note %j', async (patch) => {
+    await assertFails(
+      setDoc(doc(agent(), 'users', 'agent-a', 'notes', noteId), {
+        ...body(),
+        ...patch,
+      }),
+    );
+  });
+  it('does not allow mutation, ownership changes or deletion of a saved note', async () => {
+    const ref = doc(agent(), 'users', 'agent-a', 'notes', noteId);
+    await assertSucceeds(setDoc(ref, body()));
+    await assertFails(updateDoc(ref, { body: 'Changed' }));
+    await assertFails(
+      updateDoc(ref, { ownerId: 'agent-b', body: 'x'.repeat(2001) }),
+    );
+    await assertFails(deleteDoc(ref));
+  });
+  it('protects the retained archive and prevents older clients recreating deleted notes', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(
+        doc(context.firestore(), 'users', 'agent-a', 'deletedNotes', noteId),
+        { ...body(), deletedAt: serverTimestamp() },
+      );
+    });
+    for (const db of [
+      agent(),
+      viewer(),
+      env.authenticatedContext('admin-a').firestore() as unknown as Firestore,
+    ]) {
+      const archive = doc(db, 'users', 'agent-a', 'deletedNotes', noteId);
+      await assertFails(getDoc(archive));
+      await assertFails(setDoc(archive, body()));
+      await assertFails(deleteDoc(archive));
+    }
+    await assertFails(
+      setDoc(doc(agent(), 'users', 'agent-a', 'notes', noteId), body()),
+    );
+  });
+});
+describe('account-type intent and entry notes', () => {
+  async function sibling() {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'members', '138'), {
+        ...member,
+        memberId: '138',
+        accountNumber: '000401001138',
+      });
+    });
+  }
+  const typed = () => ({
+    accountSelection: 'type',
+    otherAccountId: '138',
+    accountNumberSnapshot: '',
+    uniqueNumberSnapshot: member.uniqueNumber,
+    note: 'Bring the passbook',
+    lines: { deposit: { ...line(20), accountType: 'saving' } },
+  });
+  it('saves type intent without an account number and allows recorded/void operations', async () => {
+    await sibling();
+    await assertSucceeds(create(agent(), undefined, { deposit: 20 }, typed()));
+    await assertSucceeds(getDoc(doc(viewer(), 'entries', 'entry_00000001')));
+    await assertSucceeds(record(viewer()));
+    await assertSucceeds(record(viewer(), false, 2));
+    await assertSucceeds(voidLine(agent()));
+  });
+  it.each([
+    { otherAccountId: '137' },
+    { otherAccountId: 'missing' },
+    { accountNumberSnapshot: member.accountNumber },
+    { note: 'x'.repeat(2001) },
+    { note: 4 },
+    { lines: { deposit: { ...line(20), accountType: 'loan' } } },
+    { lines: { deposit: line(20) } },
+  ])('rejects invalid multi-account entry %j', async (patch) => {
+    await sibling();
+    await assertFails(
+      create(agent(), undefined, { deposit: 20 }, { ...typed(), ...patch }),
+    );
+  });
+  it('rejects an unrelated or inactive sibling and immutable note/type changes', async () => {
+    await sibling();
+    await env.withSecurityRulesDisabled(async (c) =>
+      updateDoc(doc(c.firestore(), 'members', '138'), {
+        uniqueNumber: 'LCT999',
+      }),
+    );
+    await assertFails(create(agent(), undefined, { deposit: 20 }, typed()));
+    await env.withSecurityRulesDisabled(async (c) =>
+      updateDoc(doc(c.firestore(), 'members', '138'), {
+        uniqueNumber: member.uniqueNumber,
+        active: false,
+      }),
+    );
+    await assertFails(create(agent(), undefined, { deposit: 20 }, typed()));
+    await env.withSecurityRulesDisabled(async (c) =>
+      updateDoc(doc(c.firestore(), 'members', '138'), { active: true }),
+    );
+    await assertSucceeds(create(agent(), undefined, { deposit: 20 }, typed()));
+    await assertFails(
+      updateDoc(doc(agent(), 'entries', 'entry_00000001'), {
+        note: 'replacement',
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(viewer(), 'entries', 'entry_00000001'), {
+        'lines.deposit.accountType': 'fixed',
+        note: 'replacement',
+      }),
+    );
+  });
+});
+
+it('accepts a multi-account loan without a savings/fixed choice and keeps its audit/void protocol', async () => {
+  await env.withSecurityRulesDisabled(async (c) =>
+    setDoc(doc(c.firestore(), 'members', '138'), {
+      ...member,
+      memberId: '138',
+      accountNumber: '000401001138',
+    }),
+  );
+  await assertSucceeds(
+    create(
+      agent(),
+      undefined,
+      { loanInstalment: 20 },
+      {
+        accountSelection: 'type',
+        otherAccountId: '138',
+        accountNumberSnapshot: '',
+        uniqueNumberSnapshot: member.uniqueNumber,
+        lines: { loanInstalment: line(20) },
+      },
+    ),
+  );
+  await assertSucceeds(record(viewer(), true, 1, 'viewer-a', 'loanInstalment'));
+  await assertSucceeds(
+    record(viewer(), false, 2, 'viewer-a', 'loanInstalment'),
+  );
+  await assertSucceeds(voidLine(agent(), 'loanInstalment'));
+});

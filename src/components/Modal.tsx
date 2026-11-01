@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useId, type ReactNode } from 'react';
 import Icon from './Icon';
 export default function Modal({
   title,
@@ -9,6 +9,7 @@ export default function Modal({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const titleId = useId();
   const ref = useRef<HTMLDialogElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -34,9 +35,9 @@ export default function Modal({
     };
   }, []);
   return (
-    <dialog ref={ref} aria-labelledby="modal-title">
+    <dialog ref={ref} aria-label={title}>
       <div className="dialog-head">
-        <h2 id="modal-title">{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <button
           className="icon-button"
           aria-label="Close dialog"
