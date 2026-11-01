@@ -1,6 +1,6 @@
 # LCT Collect
 
-Mobile-first field collection log for Lusaze Community Traders SACCO. Astro static pages, React, TypeScript, Firebase Authentication and Firestore. Financial writes use Firebase transactions directly, without an offline write queue. Private note reminders use a small Cloud Functions backend; there is no analytics or payments integration.
+Mobile-first field collection log for Lusaze Community Traders SACCO. Astro static pages, React, TypeScript, Firebase Authentication and Firestore. Daily operations save locally and synchronize through authenticated transactional Cloud Functions. See [local-first behavior and rollout](docs/LOCAL_FIRST.md). Private note reminders share the backend; there is no analytics or payments integration.
 
 Deployment status and release steps: [deployment](docs/DEPLOYMENT.md). Note behaviour and reminder setup: [reminders](docs/REMINDERS.md).
 
@@ -12,7 +12,7 @@ Deployment status and release steps: [deployment](docs/DEPLOYMENT.md). Note beha
 - Office date register with composable search/type/agent/status filters, independent recording checks and audited undo.
 - Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Agent search selects the member directly. Multi-account deposits/withdrawals capture Fixed/Saving intent per amount; loan instalments use UGX without an account-type choice; the viewer determines the actual account manually in Ssentezo. Owner directory results still expand to show real account numbers.
 - Optional entry notes shared with the agent and viewer; private agent notes with inline creation, member/group tags, editing, scheduled/weekly reminders, completion, soft deletion and 50-note cursor pages.
-- Automatic offline-viewing record cache and one service worker for static app caching and validated generic push reminders. Financial writes use online transactions; note changes use authenticated online APIs.
+- Local-first daily operations, durable offline commands, automatic reconnect sync, and a service worker for the app shell and generic push reminders. Only unsynced work shows sync state; imports remain online.
 - Emulator security tests and isolated staging/production workflow definitions.
 
 ## Staging
@@ -82,8 +82,8 @@ Imports reserve account numbers and run in five-account online transaction chunk
 - Viewer changes preserve `financialRevision`, amounts, identity and session totals. Audit events use a bounded revision-keyed map so each event can receive a server timestamp and older events cannot be rewritten.
 - Recording history allows 40 transitions per line. Further changes stop with an owner escalation message. Migrate audit storage before changing that limit; never truncate old events.
 - Opening cash and each line currently have a UGX **100,000,000** cap, with separately bounded aggregates. Confirm this operating limit before a live pilot; change both client constants and rules together.
-- Failed/uncertain saves retain the submission ID, including across refreshes. Site storage must be available before a financial save is sent. Read-only sign-in can fall back to memory; sign-in normally lasts for the browser session. Draft account changes and navigation require an explicit discard decision. No financial form payload is saved as an offline queue. Reconnect and check the same ID before retrying. A restored ID does not restore its form inputs.
-- Security rules validate the data and atomic relationships; they cannot establish which SDK method a modified client used. The official app exclusively uses `runTransaction()` for writes.
+- Daily saves retain their complete immutable payload and submission ID in IndexedDB before local success. Trusted-device sign-in persists; limited storage supports online viewing. Draft changes keep the explicit discard guard. The queue retries the same ID; durable server receipts prevent duplicates. Legacy uncertain IDs still require an online status check because their form inputs were never retained.
+- Security rules validate the data and atomic relationships; they cannot establish which SDK method a modified client used. Daily operations use the validated sync backend. Reviewed directory imports still use client transactions. The server-only protocol switch disables legacy direct financial writes after rollout.
 - Cash is a field estimate, not a member savings balance or withdrawal entitlement. Corrections discovered after expiry/recording require SACCO office escalation; there is no historical edit workflow.
 
 ## Deployment and release status

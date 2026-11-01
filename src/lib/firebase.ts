@@ -3,7 +3,7 @@ import { storage } from './storage';
 import {
   connectAuthEmulator,
   initializeAuth,
-  browserSessionPersistence,
+  browserLocalPersistence,
   inMemoryPersistence,
   setPersistence,
   signOut,
@@ -13,8 +13,6 @@ import {
   connectFirestoreEmulator,
   initializeFirestore,
   memoryLocalCache,
-  persistentLocalCache,
-  persistentMultipleTabManager,
   terminate,
 } from 'firebase/firestore';
 
@@ -52,7 +50,7 @@ const app = initializeApp({
   messagingSenderId: env.PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
 });
 export const auth = initializeAuth(app, {
-  persistence: [browserSessionPersistence, inMemoryPersistence],
+  persistence: [browserLocalPersistence, inMemoryPersistence],
 });
 export let memoryOnlySession = false;
 export let recordCacheAvailable = true;
@@ -63,7 +61,7 @@ export async function prepareLogin() {
   try {
     await setPersistence(
       auth,
-      available ? browserSessionPersistence : inMemoryPersistence,
+      available ? browserLocalPersistence : inMemoryPersistence,
     );
   } catch {
     memoryOnlySession = true;
@@ -73,14 +71,11 @@ export async function prepareLogin() {
 let database: ReturnType<typeof initializeFirestore> | undefined;
 export function db() {
   if (!database) {
-    // Multi-tab persistence needs Web Storage as well as IndexedDB. If the
-    // browser denies it, keep the online app usable with a memory-only cache.
+    // Confirmed records live in our IndexedDB repository; the SDK is transport only.
     recordCacheAvailable = storage.set('local', 'lct-cache-storage-check', '1');
     storage.remove('local', 'lct-cache-storage-check');
     database = initializeFirestore(app, {
-      localCache: recordCacheAvailable
-        ? persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-        : memoryLocalCache(),
+      localCache: memoryLocalCache(),
     });
     if (emulators) connectFirestoreEmulator(database, '127.0.0.1', 8080);
   }
@@ -88,10 +83,15 @@ export function db() {
 }
 if (emulators)
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-export async function logout() {
+export async function logout(preservePending = false) {
   const { disableReminders } = await import('./notifications');
-  await disableReminders();
-  await signOut(auth);
+  const { localState, clearLocal } = await import('./local');
+  if (localState().commands.length && !preservePending)
+    throw new Error(
+      'Unsynced work remains. Sync or export it before signing out.',
+    );
+  if (!preservePending) await clearLocal();
+  void disableReminders().catch(() => {});
   let cleared = true;
   if (database) {
     await terminate(database);
@@ -112,5 +112,6 @@ export async function logout() {
       'lct-cache-warning',
       'Close other LCT Collect tabs and clear site data on this device to remove its saved records.',
     );
-  window.location.replace('/login/');
+  database = undefined;
+  await signOut(auth);
 }

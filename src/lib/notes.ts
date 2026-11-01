@@ -1,3 +1,6 @@
+import { localState } from './local';
+import { parseReminder } from '../../functions/src/schedule';
+import { enqueue } from './sync';
 import {
   getFunctions,
   connectFunctionsEmulator,
@@ -28,35 +31,63 @@ export function savePrivateNote(
   expectedRevision: number,
   mutationId: string,
 ) {
-  return noteCall('manageNote', {
-    action: 'save',
-    noteId,
-    body,
-    members: tags.map((t) => t.memberId),
-    reminder,
-    expectedRevision,
+  const text = body.trim();
+  if (!text || text.length > 2000)
+    throw new Error('Enter a note of up to 2,000 characters.');
+  const parsed = parseReminder(reminder),
+    existing =
+      localState().records[`users/${auth.currentUser?.uid}/notes/${noteId}`];
+  if (
+    parsed.kind === 'once' &&
+    parsed.at <= Date.now() &&
+    JSON.stringify(parsed) !== JSON.stringify(existing?.reminder)
+  )
+    throw new Error('Choose a reminder time in the future.');
+  return enqueue(
+    'note',
+    `note:${noteId}`,
+    {
+      action: 'save',
+      noteId,
+      body,
+      members: tags.map((t) => t.memberId),
+      tags,
+      reminder,
+      expectedRevision,
+      mutationId,
+    },
     mutationId,
-  });
+  );
 }
 export function completeNote(
   note: AgentNote,
   done: boolean,
   mutationId: string,
 ) {
-  return noteCall('manageNote', {
-    action: 'done',
-    noteId: note.noteId,
-    done,
-    expectedRevision: note.revision ?? 0,
-    occurrenceAt: note.occurrenceAt ?? null,
+  return enqueue(
+    'note',
+    `note:${note.noteId}`,
+    {
+      action: 'done',
+      noteId: note.noteId,
+      done,
+      expectedRevision: note.revision ?? 0,
+      occurrenceAt: note.occurrenceAt ?? null,
+      mutationId,
+    },
     mutationId,
-  });
+  );
 }
 export function deleteNote(note: AgentNote, mutationId: string) {
-  return noteCall('manageNote', {
-    action: 'delete',
-    noteId: note.noteId,
-    expectedRevision: note.revision ?? 0,
+  return enqueue(
+    'note',
+    `note:${note.noteId}`,
+    {
+      action: 'delete',
+      noteId: note.noteId,
+      expectedRevision: note.revision ?? 0,
+      mutationId,
+    },
     mutationId,
-  });
+  );
 }

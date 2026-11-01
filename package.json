@@ -20,7 +20,7 @@
     "test:e2e:running": "playwright test",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"scripts/*.{ts,mjs,js,cjs}\" \"tests/**/*.ts\" \"*.{json,md,ts,mjs}\" \".github/workflows/*.yml\" \"functions/src/**/*.ts\" \"functions/*.json\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"scripts/*.{ts,mjs,js,cjs}\" \"tests/**/*.ts\" \"*.{json,md,ts,mjs}\" \".github/workflows/*.yml\" \"functions/src/**/*.ts\" \"functions/*.json\"",
-    "test:reminders": "node scripts/prepare-reminder-emulator.mjs && npm --prefix functions run build && firebase emulators:exec --only auth,firestore,functions --project demo-lct-collect \"npm run seed:emulators && LCT_REMINDER_TESTS=true vitest run tests/reminder-api.test.ts\""
+    "test:reminders": "node scripts/prepare-reminder-emulator.mjs && npm --prefix functions run build && firebase emulators:exec --only auth,firestore,functions --project demo-lct-collect \"npm run seed:emulators && LCT_REMINDER_TESTS=true vitest run tests/reminder-api.test.ts tests/sync-api.test.ts\""
   },
   "dependencies": {
     "@astrojs/react": "^4.3.0",

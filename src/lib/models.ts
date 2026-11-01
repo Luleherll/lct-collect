@@ -78,6 +78,10 @@ export interface Line {
   recordingHistory: Record<string, RecordingEvent>;
 }
 export interface Entry {
+  capturedAt?: Timestamp;
+  receivedAt?: Timestamp;
+  lateSubmission?: boolean;
+  clockFlag?: boolean;
   entryId: string;
   /** Type intent uses internal directory references; no real account is assigned. */
   accountSelection?: 'type';

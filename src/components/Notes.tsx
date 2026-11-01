@@ -1,3 +1,7 @@
+import SyncState from './SyncState';
+import { useLocalVersion } from '../hooks/useLocal';
+import { localState, changeLocal } from '../lib/local';
+import { visible } from '../lib/projection';
 import { useEffect, useRef, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -36,26 +40,73 @@ export default function Notes({
   error: string;
   action: (fn: () => Promise<unknown>, success: string) => Promise<void>;
 }) {
-  const [tags, setTags] = useState<MemberTag[]>([]),
-    [reminder, setReminder] = useState<Reminder>({ kind: 'none' });
+  const localVersion = useLocalVersion();
+
+  const [tags, setTags] = useState<MemberTag[]>(
+      () => localState().drafts?.noteComposer?.tags ?? [],
+    ),
+    [reminder, setReminder] = useState<Reminder>(
+      () => localState().drafts?.noteComposer?.reminder ?? { kind: 'none' },
+    );
   const [selectedId, setSelectedId] = useState(
-      () => new URLSearchParams(location.search).get('note') ?? '',
+      () =>
+        new URLSearchParams(location.search).get('note') ??
+        localState().drafts?.noteEdit?.noteId ??
+        '',
     ),
     [selected, setSelected] = useState<AgentNote | null>(null),
     [confirmDelete, setConfirmDelete] = useState(false),
-    [editing, setEditing] = useState(false),
+    [editing, setEditing] = useState(!!localState().drafts?.noteEdit),
     [edit, setEdit] = useState<{
       body: string;
       tags: MemberTag[];
       reminder: Reminder;
       revision: number;
-    } | null>(null),
+    } | null>(() => localState().drafts?.noteEdit ?? null),
     [localError, setLocalError] = useState(''),
     [enabled, setEnabled] = useState(false);
-  const createId = useRef(''),
+  useEffect(() => {
+    const data = visible(localState().records, localState().commands, uid)[
+      `users/${uid}/notes/${selectedId}`
+    ];
+    setSelected(data ?? null);
+  }, [localVersion, selectedId, uid]);
+  useEffect(() => {
+    if (editing && edit)
+      void changeLocal((s) => {
+        s.drafts = { ...s.drafts, noteEdit: { noteId: selectedId, ...edit } };
+      }).catch(() => {});
+  }, [editing, edit, selectedId]);
+  const createId = useRef(
+      localState().drafts?.noteComposer?.createId ?? crypto.randomUUID(),
+    ),
     mutationId = useRef(''),
     deleting = useRef(false),
     deleteMutation = useRef('');
+  useEffect(() => {
+    const noteId = createId.current;
+    const timer = setTimeout(
+      () =>
+        void changeLocal((s) => {
+          if (
+            noteId &&
+            s.commands.some(
+              (p) =>
+                p.command.kind === 'note' &&
+                p.command.data.noteId === noteId &&
+                p.command.data.action === 'save',
+            )
+          )
+            return;
+          s.drafts = {
+            ...s.drafts,
+            noteComposer: { tags, reminder, createId: noteId },
+          };
+        }).catch(() => {}),
+      150,
+    );
+    return () => clearTimeout(timer);
+  }, [tags, reminder]);
   useEffect(() => {
     if (confirmDelete) document.getElementById('keep-note')?.focus();
   }, [confirmDelete]);
@@ -85,8 +136,14 @@ export default function Notes({
       doc(db(), 'users', uid, 'notes', selectedId),
       { includeMetadataChanges: true },
       (snap) => {
-        if (snap.exists()) setSelected(snap.data() as AgentNote);
+        if (snap.exists() && !snap.metadata.fromCache)
+          void changeLocal((s) => {
+            s.records[`users/${uid}/notes/${selectedId}`] = snap.data();
+          });
         else if (!snap.metadata.fromCache) {
+          void changeLocal((s) => {
+            delete s.records[`users/${uid}/notes/${selectedId}`];
+          });
           setSelected(null);
           setSelectedId('');
           setConfirmDelete(false);
@@ -103,6 +160,9 @@ export default function Notes({
   function close() {
     if (busy) return;
     const closeNow = () => {
+      void changeLocal((s) => {
+        if (s.drafts) delete s.drafts.noteEdit;
+      }).catch(() => {});
       setConfirmDelete(false);
       setSelectedId('');
       setEditing(false);
@@ -124,7 +184,7 @@ export default function Notes({
         0,
         mutationId.current,
       );
-      createId.current = '';
+      createId.current = crypto.randomUUID();
       mutationId.current = '';
       onDraft('');
       setTags([]);
@@ -223,6 +283,7 @@ export default function Notes({
               }}
             >
               <span>{note.body}</span>
+              <SyncState noteId={note.noteId} />
               <small>
                 {reminderLabel(note.reminder) || dateTimeLabel(note.createdAt)}
                 {note.tags?.length

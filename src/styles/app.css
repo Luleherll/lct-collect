@@ -3037,3 +3037,18 @@ textarea:hover:not(:disabled) {
   min-width: 44px;
   min-height: 44px;
 }
+
+.sync-state {
+  display: inline-block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-inline: 0.35rem;
+}
+
+.recovery-details {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 35vh;
+  overflow-y: auto;
+  font-size: 0.8rem;
+}
