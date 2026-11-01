@@ -290,6 +290,11 @@ export const syncOperation = onCall(options, async (request) => {
     throw new HttpsError('unauthenticated', 'Sign in first.');
   const c = request.data as Command;
   validateCommand(c);
+  if (c.actorId !== undefined && c.actorId !== request.auth.uid)
+    throw new HttpsError(
+      'permission-denied',
+      'This operation belongs to another signed-in account.',
+    );
   try {
     if (c.kind === 'note') {
       const uid = await agent(request.auth.uid);

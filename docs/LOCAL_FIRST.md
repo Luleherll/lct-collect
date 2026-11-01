@@ -100,3 +100,17 @@ are p95 <=200 ms for local save/cached navigation and <=100 ms for directory
 search. Queue count, error messages and server receipt timestamps support
 troubleshooting. No analytics service or payload logging is introduced. Emulator
 or desktop performance is not a substitute for the field pilot.
+
+## Security review
+
+See [the review report](SECURITY_REVIEW.json). The review corrected first-edit
+reconciliation for legacy notes, bound newly captured commands to their actor
+across account switches, and aligned future-session/void validation with the
+operational window. Existing pending version-1 commands remain compatible.
+Authority still comes exclusively from Firebase Auth and server profile reads.
+
+The PR preview publisher deploys static Hosting only. A successful preview
+release does not mean `syncOperation` is deployed. Before field sync acceptance,
+verify the callable endpoint in staging and deploy the reviewed backend through
+an authorized identity. Do not weaken OIDC branch/workflow restrictions to let
+feature-branch code impersonate the permanent staging deployment identity.

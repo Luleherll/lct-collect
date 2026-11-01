@@ -169,4 +169,13 @@ describe('durable local-first operations', () => {
     await expect(clearLocal()).rejects.toThrow('Unsynced');
     expect(localState().commands).toHaveLength(1);
   });
+  it('upgrades a cached legacy note with no revision on its first acknowledged edit', () => {
+    const s = localState(),
+      path = `users/${uid}/notes/legacy-note`;
+    s.records[path] = { noteId: 'legacy-note', body: 'Old body' };
+    reconcile(s, {
+      [path]: { noteId: 'legacy-note', body: 'Edited body', revision: 1 },
+    });
+    expect(s.records[path]).toMatchObject({ body: 'Edited body', revision: 1 });
+  });
 });

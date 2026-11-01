@@ -45,6 +45,10 @@ export function validateCommand(c: Command) {
   if (
     !c ||
     c.version !== 1 ||
+    (c.actorId !== undefined &&
+      (typeof c.actorId !== 'string' ||
+        !c.actorId.length ||
+        c.actorId.length > 128)) ||
     !validId(c.id) ||
     !validId(c.deviceId) ||
     (c.supersedes !== undefined && !validId(c.supersedes)) ||
@@ -67,6 +71,11 @@ export function validateCommand(c: Command) {
 }
 async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
   validateCommand(c);
+  if (c.actorId !== undefined && c.actorId !== uid)
+    throw new HttpsError(
+      'permission-denied',
+      'This operation belongs to another signed-in account.',
+    );
   const db = getFirestore(),
     receipt = db.doc(`users/${uid}/mutations/${c.id}`),
     hash = signature(c);
@@ -137,7 +146,7 @@ async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
         !integer(d.openingCash)
       )
         fail('Invalid opening cash or workday.');
-      if (start > now.toMillis() + 300000)
+      if (start > now.toMillis())
         fail('Device date is ahead. Correct it before syncing.');
       if (s && s.openingCash !== d.openingCash)
         fail(
@@ -256,6 +265,7 @@ async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
           s.agentId !== uid ||
           e.agentId !== uid ||
           e.sessionId !== sessionId ||
+          now.toMillis() < s.startsAt.toMillis() ||
           now.toMillis() >= s.endsAt.toMillis() ||
           l.recorded
         )
@@ -384,6 +394,7 @@ export async function recordRejection(
 export function receiptMetadata(c: Command) {
   return {
     schemaVersion: c.version,
+    claimedActorId: c.actorId ?? null,
     kind: c.kind,
     deviceId: c.deviceId,
     capturedAtMs: c.capturedAt,

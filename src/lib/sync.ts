@@ -12,6 +12,7 @@ import {
   changeLocal,
   durableStorageAvailable,
   localOwner,
+  namespace,
   localState,
   reconcile,
   unpack,
@@ -39,6 +40,8 @@ export async function enqueue(
     );
   const uid = auth.currentUser?.uid;
   if (!uid) throw new Error('Sign in before saving.');
+  if (localOwner() !== namespace(uid, String(auth.app.options.projectId)))
+    throw new Error('Your account changed. Reopen the app before saving.');
   const started = performance.now();
   await changeLocal((s) => {
     const existing = s.commands.find((p) => p.command.id === id);
@@ -55,6 +58,7 @@ export async function enqueue(
       throw new Error('Resolve the pending change for this record first.');
     const command: Command = {
       version: 1,
+      actorId: uid,
       id,
       deviceId: deviceId(),
       capturedAt: Date.now(),
@@ -135,7 +139,9 @@ export async function flush(force = false) {
     stopped ||
     !navigator.onLine ||
     !localOwner() ||
-    !auth.currentUser
+    !auth.currentUser ||
+    localOwner() !==
+      namespace(auth.currentUser.uid, String(auth.app.options.projectId))
   )
     return;
   running = true;

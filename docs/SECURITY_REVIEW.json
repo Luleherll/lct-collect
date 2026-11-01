@@ -1,0 +1,27 @@
+{
+  "score": 5,
+  "summary": "No authorization bypass was found in the reviewed Firestore rules and authenticated sync boundary after the fixes below. The score reflects the specified checklist and emulator coverage, not a guarantee of exhaustive security or a deployed-backend verification. Legacy direct writes remain available until the deliberate server-side protocol cutoff; device timestamps remain untrusted audit claims.",
+  "findings": [
+    {
+      "check": "Business Logic vs. Rules",
+      "severity": "moderate",
+      "status": "fixed",
+      "issue": "A legacy cached private note with no revision could reject its first revisioned server update locally and retain stale text after acknowledgement.",
+      "recommendation": "Normalize missing legacy revisions to zero; retain the new regression test alongside financial reconciliation tests."
+    },
+    {
+      "check": "Field-Level vs. Identity-Level Security",
+      "severity": "moderate",
+      "status": "fixed",
+      "issue": "New local commands lacked an explicit binding between their capture actor and the authenticated account used for upload during an account-switch race.",
+      "recommendation": "Require the local namespace to match the authenticated user before enqueue/upload and reject mismatched claimed actor IDs server-side. The claimed actor is a binding check, never a source of authority. Preserve support for previously captured v1 commands without that optional field."
+    },
+    {
+      "check": "Business Logic vs. Rules",
+      "severity": "moderate",
+      "status": "fixed",
+      "issue": "The sync void validator checked session expiry without explicitly rejecting a session whose operational start was still in the future; session creation also allowed a short future-start grace window.",
+      "recommendation": "Reject future session starts and require startsAt <= server time < endsAt for voids. Keep the future-session regression test."
+    }
+  ]
+}

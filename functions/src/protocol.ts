@@ -4,6 +4,7 @@ export const TYPES = ['deposit', 'withdrawal', 'loanInstalment'] as const;
 export type Kind = 'session' | 'entry' | 'void' | 'record' | 'note';
 export interface Command {
   version: 1;
+  actorId?: string;
   supersedes?: string;
   id: string;
   deviceId: string;

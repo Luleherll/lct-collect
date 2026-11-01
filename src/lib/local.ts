@@ -225,7 +225,7 @@ export function reconcile(s: LocalState, records: Record<string, any | null>) {
     // Older receipts must not roll back a newer live snapshot.
     const rev = (v: any) =>
       path.startsWith('sessions/')
-        ? v?.revision
+        ? (v?.revision ?? 0)
         : path.startsWith('entries/')
           ? [
               v?.financialRevision ?? 0,
@@ -233,7 +233,7 @@ export function reconcile(s: LocalState, records: Record<string, any | null>) {
                 (l: any) => l.recordingRevision ?? 0,
               ),
             ].reduce((a, b) => a + b, 0)
-          : v?.revision;
+          : (v?.revision ?? 0);
     if (value === null) delete s.records[path];
     else if (!old || rev(value) === undefined || rev(value) >= rev(old))
       s.records[path] = value;

@@ -188,4 +188,66 @@ describe.skipIf(!enabled)('durable financial sync API', () => {
       (await db.doc(`users/${uid}/notes/${noteId}`).get()).data(),
     ).toMatchObject({ body: 'Second version', revision: 2 });
   });
+  it('rejects commands bound to another actor for both financial work and private notes', async () => {
+    const financial = command('session', `session:${uid}_2026-01-01`, {
+      sessionId: `${uid}_2026-01-01`,
+      workday: '2026-01-01',
+      openingCash: 0,
+    });
+    financial.actorId = 'another-agent';
+    await expect(call(financial)).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+    const noteId = randomUUID(),
+      note = command('note', `note:${noteId}`, {
+        action: 'save',
+        noteId,
+        body: 'Private',
+        members: [],
+        reminder: { kind: 'none' },
+        expectedRevision: 0,
+      });
+    note.actorId = 'another-agent';
+    note.data.mutationId = note.id;
+    await expect(call(note)).rejects.toMatchObject({
+      code: 'permission-denied',
+    });
+    expect((await db.doc(`users/${uid}/notes/${noteId}`).get()).exists).toBe(
+      false,
+    );
+  });
+  it('does not void a session before its operational start', async () => {
+    const sessionId = `${uid}_future`,
+      entryId = randomUUID(),
+      { Timestamp } = await import('firebase-admin/firestore');
+    await db
+      .doc(`sessions/${sessionId}`)
+      .set({
+        agentId: uid,
+        workday: dayAt(Date.now() + 86400000),
+        startsAt: Timestamp.fromMillis(Date.now() + 3600000),
+        endsAt: Timestamp.fromMillis(Date.now() + 86400000),
+        revision: 0,
+      });
+    await db
+      .doc(`entries/${entryId}`)
+      .set({
+        agentId: uid,
+        sessionId,
+        lines: { deposit: { state: 'active', recorded: false, amount: 10 } },
+      });
+    await expect(
+      call(
+        command('void', `session:${sessionId}`, {
+          entryId,
+          sessionId,
+          type: 'deposit',
+          reason: 'Before start',
+        }),
+      ),
+    ).resolves.toMatchObject({ status: 'rejected' });
+    expect(
+      (await db.doc(`entries/${entryId}`).get()).data()!.lines.deposit.state,
+    ).toBe('active');
+  });
 });
