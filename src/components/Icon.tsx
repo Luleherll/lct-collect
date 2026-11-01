@@ -1,5 +1,7 @@
-// SVG source: Bootstrap Icons v1.11.3 (MIT), except the project-drawn note and more icons. See docs/THIRD_PARTY_NOTICES.md.
+// SVG source: Bootstrap Icons v1.11.3 (MIT), except the project-drawn note, more and trash icons. See docs/THIRD_PARTY_NOTICES.md.
 const icons: Record<string, string> = {
+  trash:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2h4v2M4 4l.6 9.4a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L12 4M6.5 6.5v5M9.5 6.5v5"/></svg>',
   more: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>',
 
   note: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25"><rect x="3" y="1" width="11" height="14" rx="1.5"/><path d="M1 4h4M1 8h4M1 12h4M7 5h4M7 8h4M7 11h3"/></svg>',

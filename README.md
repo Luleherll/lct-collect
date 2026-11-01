@@ -2,15 +2,17 @@
 
 Mobile-first field collection log for Lusaze Community Traders SACCO. Astro static pages, React, TypeScript, Firebase Authentication and Firestore. Financial writes use Firebase transactions directly, without an offline write queue. Private note reminders use a small Cloud Functions backend; there is no analytics or payments integration.
 
+Deployment status and release steps: [deployment](docs/DEPLOYMENT.md). Note behaviour and reminder setup: [reminders](docs/REMINDERS.md).
+
 ## Current scope
 
 - Username/password sign-in with manually provisioned agent, viewer and owner (`admin`) profiles.
 - Agent opening cash, one session per Uganda operational day (02:00–02:00), member account search, grouped deposits/withdrawals/loan instalments, review, idempotent save and eligible per-line voids.
 - Latest five own workdays and a separate recent entries page; the viewer can select any date. Transaction lists show at most 50 lines per cursor page.
 - Office date register with composable search/type/agent/status filters, independent recording checks and audited undo.
-- Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Agent search selects the member directly. Multi-account collections capture Fixed/Saving intent per amount; the viewer determines the actual account manually in Ssentezo. Owner directory results still expand to show real account numbers.
-- Optional entry notes shared with the agent and viewer; private agent notes with inline creation, popup viewing, and 50-note cursor pages.
-- Automatic offline-viewing record cache and a static-only service worker; all application writes use online transactions.
+- Owner CSV import with preview. Uses **Account Name**, **Unique Number** and **Account Number**. Unique Number identifies a member (`LCT002`) or group (`ABC1`, `ABC 2`); each numeric Ssentezo account is retained separately. Agent search selects the member directly. Multi-account deposits/withdrawals capture Fixed/Saving intent per amount; loan instalments use UGX without an account-type choice; the viewer determines the actual account manually in Ssentezo. Owner directory results still expand to show real account numbers.
+- Optional entry notes shared with the agent and viewer; private agent notes with inline creation, member/group tags, editing, scheduled/weekly reminders, completion, soft deletion and 50-note cursor pages.
+- Automatic offline-viewing record cache and one service worker for static app caching and validated generic push reminders. Financial writes use online transactions; note changes use authenticated online APIs.
 - Emulator security tests and isolated staging/production workflow definitions.
 
 ## Staging
@@ -27,6 +29,7 @@ Node 22+ and Java 21 are required. Java is used only by the Firestore emulator.
 
 ```sh
 npm ci
+npm ci --prefix functions
 cp .env.example .env
 npm run dev
 ```

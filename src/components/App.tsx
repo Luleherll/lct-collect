@@ -478,7 +478,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             (showingEntries && entries.cached);
   const waitingForData = !!(
     authorized &&
-    (isAgent || isAdmin) &&
+    (isAgent || isAdmin || isViewer) &&
     network &&
     cached &&
     !(members.error || sessions.error || entries.error || notes.error)
@@ -830,7 +830,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         hasNext={entries.hasNext}
         onPrevious={entries.previous}
         onNext={entries.next}
-        busy={busy || entries.loading}
+        busy={busy || entries.loading || loadingData}
       />
     );
   }
@@ -1044,23 +1044,12 @@ export default function App({ route: initialRoute }: { route: string }) {
           </p>
         )}
         {(cached || !network) && !loadingData && (
-          <div
-            className={
-              isAgent || isAdmin
-                ? 'connection compact-connection'
-                : 'connection'
-            }
-            role="status"
-          >
+          <div className="connection compact-connection" role="status">
             <Icon name="wifi-off" />
             <span>
-              {isAgent || isAdmin
-                ? !network
-                  ? 'You’re offline · saved data may be outdated.'
-                  : 'Can’t connect · saved data may be outdated.'
-                : !network
-                  ? 'Offline — viewing saved records. Connect to make changes.'
-                  : 'Connecting — showing saved records; results may be incomplete.'}
+              {!network
+                ? 'You’re offline · saved data may be outdated.'
+                : 'Can’t connect · saved data may be outdated.'}
             </span>
           </div>
         )}

@@ -1,6 +1,6 @@
 # Bootstrap Icons
 
-The SVG UI icons and app icon are from Bootstrap Icons v1.11.3: https://github.com/twbs/icons/tree/v1.11.3
+Most SVG UI icons are from Bootstrap Icons v1.11.3: https://github.com/twbs/icons/tree/v1.11.3
 
 MIT License
 
@@ -23,3 +23,5 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The note, more and trash UI symbols are project-drawn. The Lusaze app icons and logo were provided by the project owner; they are not Bootstrap Icons assets.

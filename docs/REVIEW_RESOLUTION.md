@@ -1,5 +1,7 @@
 # Review resolution
 
+Historical review record from 24 October 2026. The later approved private-note reminder backend supersedes the original no-Functions constraint; see [REMINDERS.md](REMINDERS.md) for current behaviour and [DEPLOYMENT.md](DEPLOYMENT.md) for rollout status.
+
 Scope: address the 24 October 2026 PR review while preserving the approved navy/green collection design, no Cloud Functions, no offline financial writes and manual Auth administration.
 
 | Finding                            | Resolution                                                                                                                                                           | Evidence                                         |

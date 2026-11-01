@@ -2486,7 +2486,8 @@ textarea:hover:not(:disabled) {
 }
 .note-delete {
   color: var(--danger);
-  margin-top: 0.5rem;
+  flex: none;
+  margin: 4px 0 0 4px;
 }
 .button.danger:hover:not(:disabled) {
   background: var(--danger-hover);

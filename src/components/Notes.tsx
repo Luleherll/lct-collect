@@ -10,6 +10,7 @@ import type { usePagedNotes } from '../hooks/usePagedNotes';
 import Modal from './Modal';
 import Pagination from './Pagination';
 import NoteEditor from './NoteEditor';
+import Icon from './Icon';
 export default function Notes({
   uid,
   notes,
@@ -101,14 +102,8 @@ export default function Notes({
   }, [selectedId, uid]);
   function close() {
     if (busy) return;
-    if (confirmDelete) {
-      setConfirmDelete(false);
-      requestAnimationFrame(() =>
-        document.getElementById('delete-note')?.focus(),
-      );
-      return;
-    }
     const closeNow = () => {
+      setConfirmDelete(false);
       setSelectedId('');
       setEditing(false);
       setEdit(null);
@@ -234,6 +229,21 @@ export default function Notes({
                   ? ` · ${note.tags.map((t) => t.uniqueNumber).join(', ')}`
                   : ''}
               </small>
+            </button>
+            <button
+              className="icon-button note-delete"
+              aria-label={`Delete note: ${note.body.slice(0, 60)}`}
+              title="Delete note"
+              disabled={!writable}
+              onClick={() => {
+                deleteMutation.current = crypto.randomUUID();
+                setSelected(note);
+                setSelectedId(note.noteId);
+                setEditing(false);
+                setConfirmDelete(true);
+              }}
+            >
+              <Icon name="trash" />
             </button>
           </article>
         ))}
@@ -402,17 +412,6 @@ export default function Notes({
                   Edit note
                 </button>
               </div>
-              <button
-                id="delete-note"
-                className="text-button note-delete"
-                disabled={!writable}
-                onClick={() => {
-                  deleteMutation.current = crypto.randomUUID();
-                  setConfirmDelete(true);
-                }}
-              >
-                Delete note
-              </button>
             </>
           )}
         </Modal>

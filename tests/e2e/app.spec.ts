@@ -1445,10 +1445,24 @@ test('soft deletion confirms, retains the note privately and returns from an emp
     await expect(page.locator('.note-row')).toHaveCount(50);
     await pages.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(page.locator('.note-row')).toHaveCount(1);
-    await page.getByRole('button', { name: /Retained note 0/ }).click();
     await page
-      .getByRole('button', { name: 'Delete note', exact: true })
+      .locator('.note-row')
+      .filter({ hasText: 'Retained note 0' })
       .click();
+    const noteDialog = page.getByRole('dialog', { name: 'Note', exact: true });
+    await expect(noteDialog).toBeVisible();
+    await expect(
+      page
+        .getByRole('dialog', { name: 'Note', exact: true })
+        .getByRole('button', { name: 'Delete note', exact: true }),
+    ).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(noteDialog).toHaveCount(0);
+    const trash = page.getByRole('button', {
+      name: 'Delete note: Retained note 0',
+      exact: true,
+    });
+    await trash.click();
     let dialog = page.getByRole('dialog', {
       name: 'Delete note?',
       exact: true,
@@ -1457,12 +1471,9 @@ test('soft deletion confirms, retains the note privately and returns from an emp
       dialog.getByRole('button', { name: 'Keep note' }),
     ).toBeFocused();
     await dialog.getByRole('button', { name: 'Keep note' }).click();
-    await expect(
-      page.getByRole('dialog', { name: 'Note', exact: true }),
-    ).toContainText('Retained note 0');
-    await page
-      .getByRole('button', { name: 'Delete note', exact: true })
-      .click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(trash).toBeFocused();
+    await trash.click();
     dialog = page.getByRole('dialog', { name: 'Delete note?', exact: true });
     await noOverflow(page);
     const audit = await new AxeBuilder({ page })
@@ -1497,5 +1508,39 @@ test('soft deletion confirms, retains the note privately and returns from an emp
     ).toBeVisible();
   } finally {
     await deleteApp(app);
+  }
+});
+
+test('viewer uses the shared loading overlay before a compact offline notice', async ({
+  page,
+  context,
+}) => {
+  await login(page, 'viewer');
+  let release: () => void = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/google.firestore.v1.Firestore/**', async (route) => {
+    await blocked;
+    await route.continue();
+  });
+  try {
+    await page.reload();
+    await expect(page.locator('.loading-overlay')).toBeVisible();
+    await expect(page.locator('.connection')).toHaveCount(0);
+    await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
+    release();
+    await expect(page.locator('.loading-overlay')).toHaveCount(0);
+    await expect(page.locator('.connection')).toHaveCount(0);
+    await page.unroute('**/google.firestore.v1.Firestore/**');
+    await context.setOffline(true);
+    await expect(page.locator('.connection.compact-connection')).toContainText(
+      'You’re offline',
+    );
+    await expect(page.locator('.loading-overlay')).toHaveCount(0);
+    await noOverflow(page);
+  } finally {
+    release();
+    await context.setOffline(false);
   }
 });
