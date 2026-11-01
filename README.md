@@ -1,6 +1,6 @@
 # LCT Collect
 
-Mobile-first field collection log for Lusaze Community Traders SACCO. Astro static pages, React, TypeScript, Firebase Authentication and Firestore. No Cloud Functions, custom API, analytics, payments integration or offline write queue.
+Mobile-first field collection log for Lusaze Community Traders SACCO. Astro static pages, React, TypeScript, Firebase Authentication and Firestore. Financial writes use Firebase transactions directly, without an offline write queue. Private note reminders use a small Cloud Functions backend; there is no analytics or payments integration.
 
 ## Current scope
 
@@ -92,3 +92,7 @@ Do not treat a successful build or emulator run as field acceptance. Browser vis
 The mobile refinement and review fixes are tracked in [review resolution](docs/REVIEW_RESOLUTION.md). Visual and interaction contracts are maintained in [DESIGN.md](DESIGN.md) and [UX-CONTRACT.md](UX-CONTRACT.md). Browser tests use 820 synthetic accounts against local emulators only.
 
 See [account types and notes](docs/ACCOUNT_TYPES_AND_NOTES.md) for data compatibility, access and rollout details.
+
+## Reminder notes
+
+Private agent notes support member tags, one-off/weekly EAT reminders, editing and completion. Android browser push requires explicit permission on the permanent app. See [reminder setup and verification](docs/REMINDERS.md). Loan instalments always use a UGX field and do not require Fixed/Saving selection.

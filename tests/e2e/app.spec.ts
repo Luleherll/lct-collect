@@ -521,13 +521,14 @@ test('multi-account members select in one tap and save mixed account types with 
   await expect(page.locator('.entry-card .account')).toContainText(
     '2 accounts',
   );
+  await expect(page.getByLabel('Deposit account type')).toBeFocused();
   await expect(page.locator('#deposit')).toBeDisabled();
-  await expect(page.locator('#loanInstalment')).toBeDisabled();
+  await expect(page.locator('#loanInstalment')).toBeEnabled();
   await page.getByLabel('Deposit account type').selectOption('saving');
   await expect(page.locator('#deposit')).toBeEnabled();
-  await expect(page.locator('#loanInstalment')).toBeDisabled();
+  await expect(page.locator('#loanInstalment')).toBeEnabled();
   await page.locator('#deposit').fill('33008');
-  await page.getByLabel('Loan instalment account type').selectOption('fixed');
+  await expect(page.getByLabel('Loan instalment account type')).toHaveCount(0);
   await page.locator('#loanInstalment').fill('1000');
   await page
     .getByLabel('Notes Optional', { exact: true })
@@ -553,12 +554,10 @@ test('multi-account members select in one tap and save mixed account types with 
   await page.screenshot({
     path: join(evidence, 'multi-account-entry-390.png'),
   });
-  await page.getByLabel('Loan instalment account type').selectOption('fixed');
+  await expect(page.getByLabel('Loan instalment account type')).toHaveCount(0);
   await page.getByRole('button', { name: 'Review entry', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Deposit · Saving');
-  await expect(page.getByRole('dialog')).toContainText(
-    'Loan instalment · Fixed',
-  );
+  await expect(page.getByRole('dialog')).toContainText('Loan instalment');
   await expect(page.getByRole('dialog')).toContainText(
     'Bring the passbook next visit',
   );
@@ -1255,7 +1254,7 @@ test('equal-width search rows, stable account controls and accessible header men
   await page.locator('.find-card .single-account').first().click();
   await expect(page.getByLabel('Deposit account type')).toBeDisabled();
   await expect(page.getByLabel('Withdrawal account type')).toBeDisabled();
-  await expect(page.getByLabel('Loan instalment account type')).toBeDisabled();
+  await expect(page.getByLabel('Loan instalment account type')).toHaveCount(0);
   await expect(page.locator('#deposit')).toBeEnabled();
   await expect(page.locator('footer')).toHaveCount(0);
   const more = page.getByRole('button', { name: 'More actions', exact: true });
@@ -1295,4 +1294,121 @@ test('equal-width search rows, stable account controls and accessible header men
   await page.locator('#entry-note').fill('');
   await menu(page, 'Sign out');
   await page.waitForURL('**/login/');
+});
+
+test('loan-only collection needs no account-type selection for a multi-account member', async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByLabel('Search members', { exact: true }).fill('LCT006');
+  await page.locator('.find-card .multi-account').click();
+  await expect(page.getByLabel('Loan instalment account type')).toHaveCount(0);
+  await expect(page.locator('#loanInstalment')).toBeEnabled();
+  await expect(page.locator('#deposit')).toBeDisabled();
+  await page.locator('#loanInstalment').fill('987');
+  await page.getByRole('button', { name: 'Review entry', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Loan instalment');
+  await expect(page.getByRole('dialog')).not.toContainText('Fixed');
+  await page
+    .getByRole('button', { name: 'Confirm & save', exact: true })
+    .click();
+  await expect(
+    page.getByRole('status', { name: 'Saved entry receipt' }),
+  ).toContainText('987');
+  await menu(page, 'Recent entries');
+  await expect(
+    page.locator('.entry-row').filter({ hasText: '987' }).first(),
+  ).toContainText('Loan');
+});
+test('notes support member tags, schedules, editing and reversible completion', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.getByRole('link', { name: 'Notes', exact: true }).click();
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await page
+    .getByLabel('New note', { exact: true })
+    .fill('Tagged reminder for collection');
+  await page.getByRole('button', { name: 'Tag members', exact: true }).click();
+  await page.getByLabel('Tag members by name or number').fill('LCT006');
+  await page.locator('.tag-result').first().click();
+  await expect(page.locator('.note-composer .note-tags')).toContainText(
+    'LCT006',
+  );
+  await page.getByRole('button', { name: 'Reminder', exact: true }).click();
+  await page.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+  await page.getByLabel('Weekday', { exact: true }).selectOption('2');
+  await page.getByLabel('Time (EAT)', { exact: true }).fill('10:15');
+  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await expect(
+    page.getByRole('status', { name: 'Activity update' }),
+  ).toContainText('Note added');
+  await page
+    .getByRole('button', { name: /Tagged reminder for collection/ })
+    .first()
+    .click();
+  let dialog = page.getByRole('dialog', { name: 'Note', exact: true });
+  await expect(dialog).toContainText('Every Tuesday');
+  await expect(dialog).toContainText('LCT006');
+  await dialog.getByRole('button', { name: 'Edit note', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Edit note', exact: true });
+  await dialog
+    .getByLabel('Note text', { exact: true })
+    .fill('Edited tagged reminder');
+  await dialog.getByLabel('Repeat', { exact: true }).selectOption('once');
+  await dialog
+    .getByLabel('Date and time (EAT)', { exact: true })
+    .fill('2020-01-01T09:00');
+  await dialog
+    .getByRole('button', { name: 'Save changes', exact: true })
+    .click();
+  await expect(dialog.getByRole('alert')).toContainText('future');
+  await expect(dialog.getByLabel('Note text', { exact: true })).toHaveValue(
+    'Edited tagged reminder',
+  );
+  const { localDateTime } = await import('../../functions/src/schedule');
+  await dialog
+    .getByLabel('Date and time (EAT)', { exact: true })
+    .fill(localDateTime(Date.now() + 86400000));
+  await dialog
+    .getByRole('button', { name: 'Save changes', exact: true })
+    .click();
+  dialog = page.getByRole('dialog', { name: 'Note', exact: true });
+  await expect(dialog).toContainText('Edited tagged reminder');
+  await dialog.getByRole('button', { name: 'Mark done', exact: true }).click();
+  await expect(
+    dialog.getByRole('button', { name: 'Reopen', exact: true }),
+  ).toBeVisible();
+  await dialog.getByRole('button', { name: 'Reopen', exact: true }).click();
+  await expect(
+    dialog.getByRole('button', { name: 'Mark done', exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await noOverflow(page);
+  const noteId = await page
+    .locator('.note-list-row')
+    .filter({ hasText: 'Edited tagged reminder' })
+    .first()
+    .getAttribute('data-note-id');
+  const browser = page.context().browser()!;
+  const extra = await browser.newContext();
+  const signedOut = await extra.newPage();
+  await signedOut.goto(`/agent/notes/?note=${noteId}`);
+  await signedOut.waitForURL('**/login/');
+  await signedOut.getByPlaceholder('Your username').fill('demo.agent');
+  await signedOut.getByPlaceholder('Your password').fill('CollectDemo123!');
+  await signedOut.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(
+    signedOut.getByRole('dialog', { name: 'Note', exact: true }),
+  ).toContainText('Edited tagged reminder');
+  await extra.close();
+  await page.screenshot({
+    path: join(evidence, 'reminder-notes-mobile.png'),
+    fullPage: true,
+  });
+  const audit = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(audit.violations).toEqual([]);
 });

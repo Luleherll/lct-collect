@@ -50,6 +50,7 @@ import HeaderMenu from './HeaderMenu';
 import { usePagination } from '../hooks/usePagination';
 import MemberResults from './MemberResults';
 import Notes from './Notes';
+import { restoreReminders } from '../lib/notifications';
 import { usePagedNotes } from '../hooks/usePagedNotes';
 import Modal from './Modal';
 import { Account, Status } from './Account';
@@ -113,6 +114,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   >({});
   const [entryNote, setEntryNote] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
+  const [noteExtraDirty, setNoteExtraDirty] = useState(false);
   const pendingId = useRef(''),
     [uncertain, setUncertain] = useState(false);
   const [q, setQ] = useState(''),
@@ -137,13 +139,17 @@ export default function App({ route: initialRoute }: { route: string }) {
   const dirty =
     TYPES.some((t) => values[t].trim() !== '') ||
     !!entryNote.trim() ||
-    (route === 'notes' && !!noteDraft.trim());
+    (route === 'notes' && (!!noteDraft.trim() || noteExtraDirty));
   const depositRef = useRef<HTMLInputElement>(null);
   const mutation = useRef(false);
   const allowUnload = useRef(false);
   useEffect(() => {
-    if (member && !uncertain) depositRef.current?.focus();
-  }, [member?.memberId]);
+    if (member && !uncertain) {
+      if (otherAccountId)
+        document.getElementById('deposit-account-type')?.focus();
+      else depositRef.current?.focus();
+    }
+  }, [member?.memberId, otherAccountId]);
   function protect(
     run: () => void,
     title = 'Discard this entry?',
@@ -186,6 +192,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setModal(null);
     setEntryNote('');
     setNoteDraft('');
+    setNoteExtraDirty(false);
     setAccountTypes({});
     setOtherAccountId('');
     if (next !== 'agent') {
@@ -294,8 +301,12 @@ export default function App({ route: initialRoute }: { route: string }) {
     [],
   );
   useEffect(() => {
-    if (authReady && !user && route !== 'login')
+    if (authReady && !user && route !== 'login') {
+      const noteId = new URLSearchParams(location.search).get('note');
+      if (route === 'notes' && noteId && /^[A-Za-z0-9_-]{8,100}$/.test(noteId))
+        storage.set('session', 'lct-note-destination', noteId);
       window.location.replace('/login/');
+    }
   }, [authReady, user, route]);
   useEffect(() => {
     if (!user) return;
@@ -327,8 +338,21 @@ export default function App({ route: initialRoute }: { route: string }) {
         if (!allowed.includes(route)) {
           // Complete sign-in without destroying an in-memory Auth session.
           if (route === 'login') {
-            window.history.replaceState(null, '', HOME[p.role]);
-            setRoute(p.role);
+            const destination =
+              p.role === 'agent'
+                ? storage.get('session', 'lct-note-destination')
+                : null;
+            storage.remove('session', 'lct-note-destination');
+            const noteId =
+              destination && /^[A-Za-z0-9_-]{8,100}$/.test(destination)
+                ? destination
+                : null;
+            window.history.replaceState(
+              null,
+              '',
+              noteId ? `/agent/notes/?note=${noteId}` : HOME[p.role],
+            );
+            setRoute(noteId ? 'notes' : p.role);
             setStatus(p.role === 'viewer' ? 'unrecorded' : 'all');
             document.title = 'LCT Collect';
           } else window.location.replace(HOME[p.role]);
@@ -368,6 +392,42 @@ export default function App({ route: initialRoute }: { route: string }) {
   const isAgent = profile?.role === 'agent',
     isViewer = profile?.role === 'viewer',
     isAdmin = profile?.role === 'admin';
+  useEffect(() => {
+    if (!user || !isAgent) return;
+    const refresh = () => void restoreReminders(user.uid).catch(() => {});
+    refresh();
+    window.addEventListener('focus', refresh);
+    const timer = window.setInterval(refresh, 24 * 3600000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.clearInterval(timer);
+    };
+  }, [user?.uid, isAgent]);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const receive = (event: MessageEvent) => {
+      if (event.data?.type !== 'OPEN_REMINDER') return;
+      const url = new URL(event.data.path, location.origin);
+      const noteId = url.searchParams.get('note');
+      if (
+        url.origin !== location.origin ||
+        url.pathname !== '/agent/notes/' ||
+        !noteId ||
+        !/^[A-Za-z0-9_-]{8,100}$/.test(noteId)
+      )
+        return;
+      protect(() => {
+        navigateTo('/agent/notes/');
+        history.replaceState(null, '', url.pathname + url.search);
+        window.dispatchEvent(
+          new CustomEvent('open-reminder', { detail: noteId }),
+        );
+      });
+    };
+    navigator.serviceWorker.addEventListener('message', receive);
+    return () =>
+      navigator.serviceWorker.removeEventListener('message', receive);
+  }, [dirty, busy, uncertain, route]);
   const members = useRecords<Member>(
     'members',
     isAdmin ? [] : [where('active', '==', true)],
@@ -482,7 +542,12 @@ export default function App({ route: initialRoute }: { route: string }) {
       for (const t of TYPES) {
         try {
           parsed[t] = amount(values[t], true);
-          if (otherAccountId && parsed[t] > 0 && !accountTypes[t])
+          if (
+            otherAccountId &&
+            t !== 'loanInstalment' &&
+            parsed[t] > 0 &&
+            !accountTypes[t]
+          )
             errors[t] = 'Choose Fixed or Saving.';
         } catch (e) {
           errors[t] = message(e);
@@ -493,7 +558,10 @@ export default function App({ route: initialRoute }: { route: string }) {
       if (invalid) {
         document
           .getElementById(
-            otherAccountId && parsed[invalid] > 0 && !accountTypes[invalid]
+            otherAccountId &&
+              invalid !== 'loanInstalment' &&
+              parsed[invalid] > 0 &&
+              !accountTypes[invalid]
               ? `${invalid}-account-type`
               : invalid,
           )
@@ -594,7 +662,9 @@ export default function App({ route: initialRoute }: { route: string }) {
             amount: reviewValues[t],
             state: 'active',
             recorded: false,
-            ...(otherAccountId ? { accountType: accountTypes[t] } : {}),
+            ...(otherAccountId && t !== 'loanInstalment'
+              ? { accountType: accountTypes[t] }
+              : {}),
           },
         ]),
       );
@@ -806,7 +876,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           >
             <button
               className="entry-identity"
-              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, ${entryAccountLabel(row.entry, row.line)}`}
+              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, ${entryAccountLabel(row.entry, row.line, row.type)}`}
               onClick={() => showLine(row)}
             >
               <strong>{row.entry.memberNameSnapshot}</strong>
@@ -814,7 +884,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                 {row.entry.uniqueNumberSnapshot
                   ? `${row.entry.uniqueNumberSnapshot} · `
                   : ''}
-                {entryAccountLabel(row.entry, row.line)}
+                {entryAccountLabel(row.entry, row.line, row.type)}
                 {row.entry.note && ' · Note'}
               </span>
               <span>
@@ -1249,32 +1319,36 @@ export default function App({ route: initialRoute }: { route: string }) {
                           </span>
                         </label>
                         <div className="currency-input">
-                          <select
-                            id={`${t}-account-type`}
-                            aria-invalid={!!fieldErrors[t]}
-                            aria-describedby={
-                              fieldErrors[t] ? `${t}-error` : undefined
-                            }
-                            aria-label={`${LABELS[t]} account type`}
-                            value={accountTypes[t] ?? ''}
-                            disabled={!otherAccountId || busy || uncertain}
-                            onChange={(e) => {
-                              if (!e.target.value)
-                                setValues((v) => ({ ...v, [t]: '' }));
-                              setAccountTypes((v) => ({
-                                ...v,
-                                [t]: e.target.value as AccountType,
-                              }));
-                              setFieldErrors((v) => ({
-                                ...v,
-                                [t]: undefined,
-                              }));
-                            }}
-                          >
-                            <option value="">Account type</option>
-                            <option value="fixed">Fixed</option>
-                            <option value="saving">Saving</option>
-                          </select>
+                          {t === 'loanInstalment' ? (
+                            <span>UGX</span>
+                          ) : (
+                            <select
+                              id={`${t}-account-type`}
+                              aria-invalid={!!fieldErrors[t]}
+                              aria-describedby={
+                                fieldErrors[t] ? `${t}-error` : undefined
+                              }
+                              aria-label={`${LABELS[t]} account type`}
+                              value={accountTypes[t] ?? ''}
+                              disabled={!otherAccountId || busy || uncertain}
+                              onChange={(e) => {
+                                if (!e.target.value)
+                                  setValues((v) => ({ ...v, [t]: '' }));
+                                setAccountTypes((v) => ({
+                                  ...v,
+                                  [t]: e.target.value as AccountType,
+                                }));
+                                setFieldErrors((v) => ({
+                                  ...v,
+                                  [t]: undefined,
+                                }));
+                              }}
+                            >
+                              <option value="">Account type</option>
+                              <option value="fixed">Fixed</option>
+                              <option value="saving">Saving</option>
+                            </select>
+                          )}
                           <input
                             id={t}
                             ref={t === 'deposit' ? depositRef : undefined}
@@ -1292,7 +1366,9 @@ export default function App({ route: initialRoute }: { route: string }) {
                               !member ||
                               busy ||
                               uncertain ||
-                              (!!otherAccountId && !accountTypes[t])
+                              (!!otherAccountId &&
+                                t !== 'loanInstalment' &&
+                                !accountTypes[t])
                             }
                             value={values[t]}
                             onChange={(e) => {
@@ -1383,7 +1459,11 @@ export default function App({ route: initialRoute }: { route: string }) {
         {isAgent && route === 'notes' && (
           <Notes
             uid={user.uid}
+            error={error}
             notes={notes}
+            members={members.data}
+            onDirty={setNoteExtraDirty}
+            protect={protect}
             draft={noteDraft}
             onDraft={setNoteDraft}
             writable={network && !notes.cached && !busy}
@@ -1670,7 +1750,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               <div key={t}>
                 <dt>
                   {LABELS[t]}
-                  {otherAccountId && accountTypes[t]
+                  {otherAccountId && t !== 'loanInstalment' && accountTypes[t]
                     ? ` · ${ACCOUNT_TYPES[accountTypes[t]!]}`
                     : ''}
                 </dt>
@@ -1720,8 +1800,16 @@ export default function App({ route: initialRoute }: { route: string }) {
         >
           <Account
             name={detailRow.entry.memberNameSnapshot}
-            number={detailRow.entry.accountNumberSnapshot}
-            accountType={entryAccountLabel(detailRow.entry, detailRow.line)}
+            number={
+              detailRow.type === 'loanInstalment'
+                ? ''
+                : detailRow.entry.accountNumberSnapshot
+            }
+            accountType={entryAccountLabel(
+              detailRow.entry,
+              detailRow.line,
+              detailRow.type,
+            )}
             memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <p>
@@ -1770,8 +1858,16 @@ export default function App({ route: initialRoute }: { route: string }) {
         <Modal title="Entry details" onClose={() => !busy && setModal(null)}>
           <Account
             name={detailRow.entry.memberNameSnapshot}
-            number={detailRow.entry.accountNumberSnapshot}
-            accountType={entryAccountLabel(detailRow.entry, detailRow.line)}
+            number={
+              detailRow.type === 'loanInstalment'
+                ? ''
+                : detailRow.entry.accountNumberSnapshot
+            }
+            accountType={entryAccountLabel(
+              detailRow.entry,
+              detailRow.line,
+              detailRow.type,
+            )}
             memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <div className="detail-amount">

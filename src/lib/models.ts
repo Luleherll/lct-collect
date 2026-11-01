@@ -47,8 +47,20 @@ export interface RecordingEvent {
 }
 export type AccountType = 'fixed' | 'saving';
 export const ACCOUNT_TYPES = { fixed: 'Fixed', saving: 'Saving' } as const;
+import type { Reminder } from '../../functions/src/schedule';
+export interface MemberTag {
+  memberId: string;
+  uniqueNumber: string;
+  fullName: string;
+}
 export interface AgentNote {
   noteId: string;
+  reminder?: Reminder;
+  tags?: MemberTag[];
+  done?: boolean;
+  revision?: number;
+  occurrenceAt?: number | null;
+  scheduleVersion?: number;
   body: string;
   createdAt: Timestamp;
 }
@@ -98,9 +110,12 @@ export const flatten = (entries: Entry[]): Row[] =>
 export const entryAccountLabel = (
   entry: Pick<Entry, 'accountNumberSnapshot' | 'accountSelection'>,
   line?: { accountType?: AccountType },
+  type?: LineType,
 ) =>
-  entry.accountSelection === 'type'
-    ? line?.accountType
-      ? ACCOUNT_TYPES[line.accountType]
-      : 'Account type selected per amount'
-    : entry.accountNumberSnapshot;
+  type === 'loanInstalment'
+    ? 'Loan'
+    : entry.accountSelection === 'type'
+      ? line?.accountType
+        ? ACCOUNT_TYPES[line.accountType]
+        : 'Account type selected per amount'
+      : entry.accountNumberSnapshot;

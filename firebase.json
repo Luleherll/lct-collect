@@ -14,6 +14,15 @@
           }
         ]
       }
+    ],
+    "rewrites": [
+      {
+        "source": "/api/reminders/validate{,/**}",
+        "function": {
+          "functionId": "validateReminder",
+          "region": "africa-south1"
+        }
+      }
     ]
   },
   "firestore": {
@@ -33,6 +42,25 @@
     "ui": {
       "enabled": false
     },
-    "singleProjectMode": true
-  }
+    "singleProjectMode": true,
+    "functions": {
+      "port": 5001
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "reminders",
+      "runtime": "nodejs22",
+      "predeploy": ["npm --prefix functions run build"],
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        ".secret.local",
+        ".env.local"
+      ]
+    }
+  ]
 }

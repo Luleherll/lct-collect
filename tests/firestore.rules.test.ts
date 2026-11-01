@@ -879,3 +879,32 @@ describe('account-type intent and entry notes', () => {
     );
   });
 });
+
+it('accepts a multi-account loan without a savings/fixed choice and keeps its audit/void protocol', async () => {
+  await env.withSecurityRulesDisabled(async (c) =>
+    setDoc(doc(c.firestore(), 'members', '138'), {
+      ...member,
+      memberId: '138',
+      accountNumber: '000401001138',
+    }),
+  );
+  await assertSucceeds(
+    create(
+      agent(),
+      undefined,
+      { loanInstalment: 20 },
+      {
+        accountSelection: 'type',
+        otherAccountId: '138',
+        accountNumberSnapshot: '',
+        uniqueNumberSnapshot: member.uniqueNumber,
+        lines: { loanInstalment: line(20) },
+      },
+    ),
+  );
+  await assertSucceeds(record(viewer(), true, 1, 'viewer-a', 'loanInstalment'));
+  await assertSucceeds(
+    record(viewer(), false, 2, 'viewer-a', 'loanInstalment'),
+  );
+  await assertSucceeds(voidLine(agent(), 'loanInstalment'));
+});

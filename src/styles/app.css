@@ -2928,3 +2928,107 @@ textarea:hover:not(:disabled) {
     gap: 4px;
   }
 }
+.note-options,
+.reminder-permission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block: 8px;
+}
+.reminder-permission {
+  font-size: 12px;
+}
+.note-options-panel {
+  padding: 10px;
+  margin-block: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+.reminder-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+.reminder-fields small {
+  grid-column: 1/-1;
+}
+.note-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block: 8px;
+}
+.note-tags > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.note-tags button {
+  min-width: 28px;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  font-size: 20px;
+}
+.tag-result {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  gap: 8px;
+  padding: 8px;
+  text-align: left;
+  background: var(--surface);
+  color: var(--navy);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+.tag-result:hover:not(:disabled) {
+  background: var(--pale);
+}
+.note-list-row {
+  display: flex;
+  align-items: flex-start;
+  border-bottom: 1px solid var(--line);
+}
+.note-list-row .note-row {
+  border-bottom: 0;
+  min-width: 0;
+}
+.note-check {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 44px;
+  min-height: 52px;
+}
+.note-check input {
+  min-height: 22px;
+  width: 22px;
+  height: 22px;
+  accent-color: var(--green);
+}
+.note-list-row.is-done .note-row > span {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.note-check input {
+  padding: 0;
+  margin: 0;
+  flex: none;
+}
+.note-tags button {
+  min-width: 44px;
+  min-height: 44px;
+}

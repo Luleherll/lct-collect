@@ -87,6 +87,7 @@ export async function saveEntry(
         TYPES.some(
           (t) =>
             values[t] > 0 &&
+            t !== 'loanInstalment' &&
             prior.lines[t]?.accountType !== details.accountTypes?.[t],
         ) ||
         TYPES.some((t) => (prior.lines[t]?.amount ?? 0) !== values[t])
@@ -124,6 +125,7 @@ export async function saveEntry(
         );
       for (const type of TYPES)
         if (
+          type !== 'loanInstalment' &&
           values[type] > 0 &&
           !['fixed', 'saving'].includes(details.accountTypes?.[type] ?? '')
         )
@@ -144,7 +146,7 @@ export async function saveEntry(
       if (values[type] > 0)
         lines[type] = {
           amount: values[type],
-          ...(details.otherAccountId
+          ...(details.otherAccountId && type !== 'loanInstalment'
             ? { accountType: details.accountTypes![type] }
             : {}),
           state: 'active',

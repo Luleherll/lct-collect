@@ -38,10 +38,10 @@ service cloud.firestore {
         && integer(s.revision,9000000000000) && s.lastMutationId is string && s.lastMutationId.size() <= 100
         && s.createdAt is timestamp;
     }
-    function initialLine(l, typed) {
+    function initialLine(l, typed, loan) {
       return l.keys().hasAll(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory'])
         && l.keys().hasOnly(['amount','state','recorded','recordedBy','recordedAt','voidedBy','voidedAt','voidReason','recordingRevision','recordingHistory','accountType'])
-        && (typed ? ('accountType' in l && l.accountType in ['fixed','saving']) : !('accountType' in l))
+        && (loan ? (!('accountType' in l) || l.accountType in ['fixed','saving']) : (typed ? ('accountType' in l && l.accountType in ['fixed','saving']) : !('accountType' in l)))
         && integer(l.amount,100000000) && l.amount > 0 && l.state == 'active' && l.recorded == false
         && l.recordedBy == null && l.recordedAt == null && l.voidedBy == null && l.voidedAt == null
         && l.voidReason == '' && l.recordingRevision == 0 && l.recordingHistory == {};
@@ -84,9 +84,9 @@ service cloud.firestore {
         && (!('uniqueNumberSnapshot' in e) || ('uniqueNumber' in m && e.uniqueNumberSnapshot == m.uniqueNumber))
         && e.createdAt == request.time && e.lines is map
         && e.lines.keys().size() >= 1 && e.lines.keys().hasOnly(['deposit','withdrawal','loanInstalment'])
-        && (!('deposit' in e.lines) || initialLine(e.lines.deposit, 'accountSelection' in e))
-        && (!('withdrawal' in e.lines) || initialLine(e.lines.withdrawal, 'accountSelection' in e))
-        && (!('loanInstalment' in e.lines) || initialLine(e.lines.loanInstalment, 'accountSelection' in e))
+        && (!('deposit' in e.lines) || initialLine(e.lines.deposit, 'accountSelection' in e, false))
+        && (!('withdrawal' in e.lines) || initialLine(e.lines.withdrawal, 'accountSelection' in e, false))
+        && (!('loanInstalment' in e.lines) || initialLine(e.lines.loanInstalment, 'accountSelection' in e, true))
         && pairedSession(e);
     }
     function sessionChange(before,after) {
@@ -175,6 +175,9 @@ service cloud.firestore {
         && directoryId(r.memberId) && r.updatedAt == request.time
         && getAfter(/databases/$(database)/documents/members/$(r.memberId)).data.accountNumber == number;
     }
+    // Reminders and devices are managed only by authenticated backend APIs.
+    match /reminderDevices/{id} { allow read, write: if false; }
+    match /reminderDeliveries/{id} { allow read, write: if false; }
     match /users/{uid}/notes/{id} {
       allow read: if role('agent') && request.auth.uid == uid;
       allow create: if role('agent') && request.auth.uid == uid && validNote(request.resource.data,id);

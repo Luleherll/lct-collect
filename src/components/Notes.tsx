@@ -1,30 +1,124 @@
-import { useRef, useState } from 'react';
-import type { AgentNote } from '../lib/models';
+import { useEffect, useRef, useState } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import type { AgentNote, Member, MemberTag } from '../lib/models';
 import { dateTimeLabel } from '../lib/domain';
-import { saveNote } from '../lib/operations';
+import { completeNote, savePrivateNote } from '../lib/notes';
+import { enableReminders, permanentNotesURL } from '../lib/notifications';
+import { reminderLabel, type Reminder } from '../../functions/src/schedule';
 import type { usePagedNotes } from '../hooks/usePagedNotes';
 import Modal from './Modal';
 import Pagination from './Pagination';
+import NoteEditor from './NoteEditor';
 export default function Notes({
   uid,
   notes,
   draft,
   onDraft,
+  onDirty,
+  protect,
+  members,
   writable,
   busy,
+  error,
   action,
 }: {
   uid: string;
   notes: ReturnType<typeof usePagedNotes>;
   draft: string;
-  onDraft: (value: string) => void;
+  onDraft: (v: string) => void;
+  onDirty: (v: boolean) => void;
+  protect: (fn: () => void) => void;
+  members: Member[];
   writable: boolean;
   busy: boolean;
+  error: string;
   action: (fn: () => Promise<unknown>, success: string) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState<AgentNote | null>(null);
-  const id = useRef('');
-  const input = useRef<HTMLTextAreaElement>(null);
+  const [tags, setTags] = useState<MemberTag[]>([]),
+    [reminder, setReminder] = useState<Reminder>({ kind: 'none' });
+  const [selectedId, setSelectedId] = useState(
+      () => new URLSearchParams(location.search).get('note') ?? '',
+    ),
+    [selected, setSelected] = useState<AgentNote | null>(null),
+    [editing, setEditing] = useState(false),
+    [edit, setEdit] = useState<{
+      body: string;
+      tags: MemberTag[];
+      reminder: Reminder;
+      revision: number;
+    } | null>(null),
+    [localError, setLocalError] = useState(''),
+    [enabled, setEnabled] = useState(false);
+  const createId = useRef(''),
+    mutationId = useRef('');
+  useEffect(() => {
+    const open = (e: Event) => setSelectedId((e as CustomEvent<string>).detail);
+    window.addEventListener('open-reminder', open);
+    return () => window.removeEventListener('open-reminder', open);
+  }, []);
+  const editDirty = !!(
+    editing &&
+    edit &&
+    selected &&
+    (edit.body !== selected.body ||
+      JSON.stringify(edit.tags) !== JSON.stringify(selected.tags ?? []) ||
+      JSON.stringify(edit.reminder) !==
+        JSON.stringify(selected.reminder ?? { kind: 'none' }))
+  );
+  useEffect(() => {
+    onDirty(tags.length > 0 || reminder.kind !== 'none' || editDirty);
+  }, [tags, reminder, editDirty]);
+  useEffect(() => {
+    if (!selectedId) {
+      setSelected(null);
+      return;
+    }
+    return onSnapshot(
+      doc(db(), 'users', uid, 'notes', selectedId),
+      (snap) => {
+        if (snap.exists()) setSelected(snap.data() as AgentNote);
+        else setLocalError('This note is unavailable.');
+      },
+      () => setLocalError('This note is unavailable to this account.'),
+    );
+  }, [selectedId, uid]);
+  function close() {
+    const closeNow = () => {
+      setSelectedId('');
+      setEditing(false);
+      setEdit(null);
+      if (location.search) history.replaceState(null, '', location.pathname);
+    };
+    if (editDirty) protect(closeNow);
+    else closeNow();
+  }
+  const save = () => {
+    if (!createId.current) createId.current = crypto.randomUUID();
+    if (!mutationId.current) mutationId.current = crypto.randomUUID();
+    void action(async () => {
+      await savePrivateNote(
+        createId.current,
+        draft,
+        tags,
+        reminder,
+        0,
+        mutationId.current,
+      );
+      createId.current = '';
+      mutationId.current = '';
+      onDraft('');
+      setTags([]);
+      setReminder({ kind: 'none' });
+      document.getElementById('new-note')?.focus();
+    }, 'Note added.');
+  };
+  function done(note: AgentNote, value: boolean) {
+    void action(
+      () => completeNote(note, value, crypto.randomUUID()),
+      value ? 'Note completed.' : 'Note reopened.',
+    );
+  }
   return (
     <>
       <div className="heading-actions">
@@ -33,34 +127,46 @@ export default function Notes({
           Back to collection
         </a>
       </div>
+      <div className="reminder-permission">
+        <button
+          className="text-button"
+          disabled={busy || enabled}
+          onClick={() => {
+            setLocalError('');
+            void enableReminders(uid)
+              .then(() => setEnabled(true))
+              .catch((e) => setLocalError(e.message));
+          }}
+        >
+          {enabled ? 'Reminders enabled' : 'Enable reminders'}
+        </button>
+        <a href={permanentNotesURL()} target="_blank" rel="noopener">
+          Open permanent app
+        </a>
+      </div>
+      {localError && (
+        <p className="field-error" role="alert">
+          {localError}
+        </p>
+      )}
       <form
         className="note-composer"
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          if (!draft.trim() || !writable) return;
-          if (!id.current) id.current = crypto.randomUUID();
-          void action(async () => {
-            await saveNote(uid, id.current, draft);
-            id.current = '';
-            onDraft('');
-            input.current?.focus();
-          }, 'Note added.');
+          if (writable && draft.trim()) save();
         }}
       >
-        <label htmlFor="new-note">
-          New note{' '}
-          <textarea
-            className="resize-none"
-            ref={input}
-            id="new-note"
-            maxLength={2000}
-            placeholder="What would you like to remember?"
-            value={draft}
-            disabled={busy}
-            onChange={(e) => onDraft(e.target.value)}
-          />
-        </label>
+        <NoteEditor
+          body={draft}
+          onBody={onDraft}
+          tags={tags}
+          onTags={setTags}
+          reminder={reminder}
+          onReminder={setReminder}
+          members={members}
+          busy={busy}
+        />
         <button
           className="button small"
           disabled={!writable || !draft.trim()}
@@ -69,16 +175,43 @@ export default function Notes({
           {busy ? 'Saving…' : 'Add note'}
         </button>
       </form>
-      <section id="note-results" tabIndex={-1} aria-label="Saved notes">
+      <section
+        aria-busy={busy}
+        id="note-results"
+        tabIndex={-1}
+        aria-label="Saved notes"
+      >
         {notes.data.map((note) => (
-          <button
-            className="note-row"
+          <article
+            className={`note-list-row ${note.done ? 'is-done' : ''}`}
+            data-note-id={note.noteId}
             key={note.noteId}
-            onClick={() => setSelected(note)}
           >
-            <span>{note.body}</span>
-            <small>{dateTimeLabel(note.createdAt)}</small>
-          </button>
+            <label className="note-check">
+              <input
+                type="checkbox"
+                aria-label={`Mark ${note.body.slice(0, 60)} ${note.done ? 'not done' : 'done'}`}
+                checked={!!note.done}
+                disabled={!writable}
+                onChange={(e) => done(note, e.target.checked)}
+              />
+            </label>
+            <button
+              className="note-row"
+              onClick={() => {
+                setSelectedId(note.noteId);
+                setEditing(false);
+              }}
+            >
+              <span>{note.body}</span>
+              <small>
+                {reminderLabel(note.reminder) || dateTimeLabel(note.createdAt)}
+                {note.tags?.length
+                  ? ` · ${note.tags.map((t) => t.uniqueNumber).join(', ')}`
+                  : ''}
+              </small>
+            </button>
+          </article>
         ))}
         {!notes.data.length && !notes.loading && (
           <p className="muted">No notes yet. Add your first note above.</p>
@@ -95,9 +228,111 @@ export default function Notes({
         focusTarget="note-results"
       />
       {selected && (
-        <Modal title="Note" onClose={() => setSelected(null)}>
-          <p className="note-body">{selected.body}</p>
-          <p className="muted">{dateTimeLabel(selected.createdAt)}</p>
+        <Modal title={editing ? 'Edit note' : 'Note'} onClose={close}>
+          {error && (
+            <p className="field-error" role="alert">
+              {error}
+            </p>
+          )}
+          {editing && edit ? (
+            <form
+              noValidate
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!mutationId.current)
+                  mutationId.current = crypto.randomUUID();
+                void action(async () => {
+                  await savePrivateNote(
+                    selected.noteId,
+                    edit.body,
+                    edit.tags,
+                    edit.reminder,
+                    edit.revision,
+                    mutationId.current,
+                  );
+                  mutationId.current = '';
+                  setEditing(false);
+                  setEdit(null);
+                }, 'Note updated.');
+              }}
+            >
+              <NoteEditor
+                id="edit-note"
+                body={edit.body}
+                onBody={(body) => setEdit({ ...edit, body })}
+                tags={edit.tags}
+                onTags={(tags) => setEdit({ ...edit, tags })}
+                reminder={edit.reminder}
+                onReminder={(reminder) => setEdit({ ...edit, reminder })}
+                members={members}
+                busy={busy}
+              />
+              <div className="actions">
+                <button
+                  type="button"
+                  className="button outline"
+                  disabled={busy}
+                  onClick={() =>
+                    protect(() => {
+                      setEditing(false);
+                      setEdit(null);
+                    })
+                  }
+                >
+                  Cancel
+                </button>
+                <button
+                  className="button"
+                  disabled={!writable || !edit.body.trim()}
+                >
+                  {busy ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <p className="note-body">{selected.body}</p>
+              <p className="muted">
+                {reminderLabel(selected.reminder) ||
+                  dateTimeLabel(selected.createdAt)}
+              </p>
+              <div className="note-tags">
+                {selected.tags?.map((t) => (
+                  <span key={t.uniqueNumber}>
+                    {t.fullName} · {t.uniqueNumber}
+                  </span>
+                ))}
+              </div>
+              <div className="actions">
+                <button
+                  className="button outline"
+                  disabled={!writable}
+                  onClick={() => done(selected, !selected.done)}
+                >
+                  {selected.done ? 'Reopen' : 'Mark done'}
+                </button>
+                <button
+                  className="button"
+                  disabled={!writable}
+                  onClick={() => {
+                    mutationId.current = '';
+                    setEdit({
+                      body: selected.body,
+                      tags: selected.tags ?? [],
+                      reminder: selected.reminder ?? { kind: 'none' },
+                      revision: selected.revision ?? 0,
+                    });
+                    setEditing(true);
+                    requestAnimationFrame(() =>
+                      document.getElementById('edit-note')?.focus(),
+                    );
+                  }}
+                >
+                  Edit note
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
     </>

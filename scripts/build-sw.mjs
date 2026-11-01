@@ -18,13 +18,16 @@ await walk(root);
 files.sort();
 const hash = createHash('sha256');
 for (const file of files) hash.update(await readFile(file));
+hash.update(await readFile('scripts/reminder-worker.js'));
 const cache = `lct-shell-${hash.digest('hex').slice(0, 12)}`;
 const urls = files
   .map((file) => '/' + relative(root, file).replaceAll('\\', '/'))
   .map((url) => (url.endsWith('/index.html') ? url.slice(0, -10) : url));
+const reminders = await readFile('scripts/reminder-worker.js', 'utf8');
 await writeFile(
   join(root, 'sw.js'),
-  `const CACHE=${JSON.stringify(cache)};const SHELL=${JSON.stringify(urls)};const PRECACHE=SHELL.filter(url=>!url.startsWith('/_astro/MemberAdmin.'));
+  `${reminders}
+const CACHE=${JSON.stringify(cache)};const SHELL=${JSON.stringify(urls)};const PRECACHE=SHELL.filter(url=>!url.startsWith('/_astro/MemberAdmin.'));
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(PRECACHE))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('lct-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method!=='GET'||url.origin!==self.location.origin||!SHELL.includes(url.pathname))return;event.respondWith(caches.open(CACHE).then(async cache=>{const saved=await cache.match(url.pathname);if(saved)return saved;const response=await fetch(event.request);if(response.ok)await cache.put(url.pathname,response.clone());return response;}));});
