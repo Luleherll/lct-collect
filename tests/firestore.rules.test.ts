@@ -816,7 +816,7 @@ describe('private notes', () => {
     for (const db of [
       agent(),
       viewer(),
-      env.authenticatedContext('admin-a').firestore(),
+      env.authenticatedContext('admin-a').firestore() as unknown as Firestore,
     ]) {
       const archive = doc(db, 'users', 'agent-a', 'deletedNotes', noteId);
       await assertFails(getDoc(archive));
