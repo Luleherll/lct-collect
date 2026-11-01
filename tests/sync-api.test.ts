@@ -1,6 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { dayAt, type Command } from '../functions/src/protocol';
+import {
+  dayAt,
+  dayStart,
+  newLines,
+  type Command,
+} from '../functions/src/protocol';
 const enabled = process.env.LCT_REMINDER_TESTS === 'true';
 let backend: typeof import('../functions/src/index');
 let db: import('firebase-admin/firestore').Firestore;
@@ -217,20 +222,37 @@ describe.skipIf(!enabled)('durable financial sync API', () => {
     );
   });
   it('does not void a session before its operational start', async () => {
-    const sessionId = `${uid}_future`,
+    const futureDay = dayAt(Date.now() + 86400000),
+      sessionId = `${uid}_${futureDay}`,
       entryId = randomUUID(),
       { Timestamp } = await import('firebase-admin/firestore');
     await db.doc(`sessions/${sessionId}`).set({
+      sessionId,
       agentId: uid,
-      workday: dayAt(Date.now() + 86400000),
-      startsAt: Timestamp.fromMillis(Date.now() + 3600000),
-      endsAt: Timestamp.fromMillis(Date.now() + 86400000),
-      revision: 0,
+      workday: futureDay,
+      startsAt: Timestamp.fromMillis(dayStart(futureDay)),
+      endsAt: Timestamp.fromMillis(dayStart(futureDay) + 86400000),
+      openingCash: 100,
+      totalDeposits: 10,
+      totalWithdrawals: 0,
+      totalLoanInstalments: 0,
+      expectedCash: 110,
+      revision: 1,
+      lastMutationId: entryId,
+      createdAt: Timestamp.now(),
     });
     await db.doc(`entries/${entryId}`).set({
+      entryId,
       agentId: uid,
+      agentNameSnapshot: 'Sync Agent',
       sessionId,
-      lines: { deposit: { state: 'active', recorded: false, amount: 10 } },
+      workday: futureDay,
+      memberId: 'sync-member',
+      memberNameSnapshot: 'Sync Member',
+      accountNumberSnapshot: '123456',
+      createdAt: Timestamp.now(),
+      financialRevision: 1,
+      lines: newLines({ deposit: 10, withdrawal: 0, loanInstalment: 0 }),
     });
     await expect(
       call(
@@ -245,5 +267,8 @@ describe.skipIf(!enabled)('durable financial sync API', () => {
     expect(
       (await db.doc(`entries/${entryId}`).get()).data()!.lines.deposit.state,
     ).toBe('active');
+    expect(
+      (await db.doc(`sessions/${sessionId}`).get()).data()!.expectedCash,
+    ).toBe(110);
   });
 });
