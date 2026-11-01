@@ -100,6 +100,41 @@ describe.skipIf(!enabled)(
         call('demo-agent', save(noteId, { body: 'Stale edit' })),
       ).rejects.toMatchObject({ code: 'failed-precondition' });
     });
+    it('soft deletes legacy notes without losing their contents, rejects stale deletes and cannot resurrect them', async () => {
+      const noteId = randomUUID(),
+        ref = db.doc(`users/demo-agent/notes/${noteId}`);
+      const { Timestamp } = await import('firebase-admin/firestore');
+      await ref.set({
+        noteId,
+        body: 'Legacy private note',
+        createdAt: Timestamp.now(),
+      });
+      const request = {
+        action: 'delete',
+        noteId,
+        expectedRevision: 0,
+        mutationId: randomUUID(),
+      };
+      await expect(
+        call('demo-agent', { ...request, expectedRevision: 1 }),
+      ).rejects.toMatchObject({ code: 'failed-precondition' });
+      await expect(call('demo-viewer', request)).rejects.toMatchObject({
+        code: 'permission-denied',
+      });
+      await call('demo-agent', request);
+      await call('demo-agent', request);
+      expect((await ref.get()).exists).toBe(false);
+      const archive = (
+        await db.doc(`users/demo-agent/deletedNotes/${noteId}`).get()
+      ).data()!;
+      expect(archive.body).toBe('Legacy private note');
+      expect(archive.deletedBy).toBe('demo-agent');
+      expect(archive.deletedAt.toMillis()).toBeGreaterThan(0);
+      expect(archive.dueAt).toBeNull();
+      await expect(call('demo-agent', save(noteId))).rejects.toMatchObject({
+        code: 'failed-precondition',
+      });
+    });
     it('completes and reopens one-off notes without replaying past/delivered reminders', async () => {
       const noteId = randomUUID(),
         at = Date.now() + 3600000;
@@ -263,6 +298,26 @@ describe.skipIf(!enabled)('reminder dispatch and device ownership', () => {
       mutationId: randomUUID(),
     });
     expect((await verify()).data.valid).toBe(false);
+    await call('demo-agent', {
+      action: 'done',
+      noteId,
+      done: false,
+      expectedRevision: 2,
+      occurrenceAt: at,
+      mutationId: randomUUID(),
+    });
+    expect((await verify()).data.valid).toBe(true);
+    await call('demo-agent', {
+      action: 'delete',
+      noteId,
+      expectedRevision: 3,
+      mutationId: randomUUID(),
+    });
+    expect((await verify()).data.valid).toBe(false);
+    expect(
+      (await db.doc(`users/demo-agent/deletedNotes/${noteId}`).get()).data()
+        ?.dueAt,
+    ).toBeNull();
     await register('demo-agent', false);
   });
 });

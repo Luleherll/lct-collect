@@ -52,3 +52,11 @@ export function completeNote(
     mutationId,
   });
 }
+export function deleteNote(note: AgentNote, mutationId: string) {
+  return noteCall('manageNote', {
+    action: 'delete',
+    noteId: note.noteId,
+    expectedRevision: note.revision ?? 0,
+    mutationId,
+  });
+}

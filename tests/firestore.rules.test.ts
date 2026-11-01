@@ -806,6 +806,27 @@ describe('private notes', () => {
     );
     await assertFails(deleteDoc(ref));
   });
+  it('protects the retained archive and prevents older clients recreating deleted notes', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(
+        doc(context.firestore(), 'users', 'agent-a', 'deletedNotes', noteId),
+        { ...body(), deletedAt: serverTimestamp() },
+      );
+    });
+    for (const db of [
+      agent(),
+      viewer(),
+      env.authenticatedContext('admin-a').firestore(),
+    ]) {
+      const archive = doc(db, 'users', 'agent-a', 'deletedNotes', noteId);
+      await assertFails(getDoc(archive));
+      await assertFails(setDoc(archive, body()));
+      await assertFails(deleteDoc(archive));
+    }
+    await assertFails(
+      setDoc(doc(agent(), 'users', 'agent-a', 'notes', noteId), body()),
+    );
+  });
 });
 describe('account-type intent and entry notes', () => {
   async function sibling() {

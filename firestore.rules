@@ -178,9 +178,12 @@ service cloud.firestore {
     // Reminders and devices are managed only by authenticated backend APIs.
     match /reminderDevices/{id} { allow read, write: if false; }
     match /reminderDeliveries/{id} { allow read, write: if false; }
+    // Soft-deleted records are retained privately and managed by the backend only.
+    match /users/{uid}/deletedNotes/{id} { allow read, write: if false; }
     match /users/{uid}/notes/{id} {
       allow read: if role('agent') && request.auth.uid == uid;
-      allow create: if role('agent') && request.auth.uid == uid && validNote(request.resource.data,id);
+      allow create: if role('agent') && request.auth.uid == uid && validNote(request.resource.data,id)
+        && !exists(/databases/$(database)/documents/users/$(uid)/deletedNotes/$(id));
       allow update, delete: if false;
     }
     match /members/{id} {

@@ -65,6 +65,15 @@ export function usePagedNotes(uid: string, enabled: boolean) {
       { includeMetadataChanges: true },
       (snap) => {
         if (snap.metadata.hasPendingWrites) return;
+        // Deleting the last note on a later page returns to the preceding page.
+        if (!snap.metadata.fromCache && snap.empty && current.page > 0) {
+          setPaging((p) =>
+            p.key === key && p.page === current.page
+              ? { ...p, page: p.page - 1 }
+              : p,
+          );
+          return;
+        }
         const data = snap.docs.map((d) => d.data() as AgentNote);
         last = snap.docs.at(-1) ?? null;
         const nextKey = snap.size === PAGE_SIZE && last ? last.id : '';

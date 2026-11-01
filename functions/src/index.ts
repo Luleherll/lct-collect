@@ -52,8 +52,13 @@ export const manageNote = onCall(options, async (request) => {
   const input = request.data as Record<string, unknown>;
   const noteId = id(input.noteId),
     mutationId = id(input.mutationId),
-    ref = db.doc(`users/${uid}/notes/${noteId}`);
-  if (input.action !== 'save' && input.action !== 'done')
+    ref = db.doc(`users/${uid}/notes/${noteId}`),
+    archive = db.doc(`users/${uid}/deletedNotes/${noteId}`);
+  if (
+    input.action !== 'save' &&
+    input.action !== 'done' &&
+    input.action !== 'delete'
+  )
     bad('Unknown note action.');
   if (
     !Number.isInteger(input.expectedRevision) ||
@@ -103,10 +108,20 @@ export const manageNote = onCall(options, async (request) => {
         seen.add(m!.uniqueNumber);
       }
     }
-  } else if (typeof input.done !== 'boolean') bad('Choose a completion state.');
+  } else if (input.action === 'done' && typeof input.done !== 'boolean')
+    bad('Choose a completion state.');
   await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref),
+    const [snap, archived] = await Promise.all([tx.get(ref), tx.get(archive)]),
       old = snap.data();
+    if (archived.exists) {
+      if (
+        input.action === 'delete' &&
+        archived.data()?.lastMutationId === mutationId &&
+        archived.data()?.lastMutationHash === signature
+      )
+        return;
+      throw new HttpsError('failed-precondition', 'This note was deleted.');
+    }
     if (old?.lastMutationId === mutationId) {
       if (old.lastMutationHash !== signature)
         bad('This save reference was already used.');
@@ -118,6 +133,24 @@ export const manageNote = onCall(options, async (request) => {
         'This note changed. Reopen it before saving.',
       );
     const now = Date.now();
+    if (input.action === 'delete') {
+      if (!old) throw new HttpsError('not-found', 'This note is unavailable.');
+      // Retain the complete private record while removing it from active queries,
+      // including legacy clients whose notes have no visibility field.
+      tx.create(archive, {
+        ...old,
+        deletedAt: nowStamp(),
+        deletedBy: uid,
+        updatedAt: nowStamp(),
+        revision: (old.revision ?? 0) + 1,
+        scheduleVersion: (old.scheduleVersion ?? 0) + 1,
+        dueAt: null,
+        lastMutationId: mutationId,
+        lastMutationHash: signature,
+      });
+      tx.delete(ref);
+      return;
+    }
     let patch: Record<string, unknown>;
     if (input.action === 'save') {
       const changed =

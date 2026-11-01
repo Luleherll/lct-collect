@@ -1412,3 +1412,90 @@ test('notes support member tags, schedules, editing and reversible completion', 
     .analyze();
   expect(audit.violations).toEqual([]);
 });
+
+test('soft deletion confirms, retains the note privately and returns from an emptied final page', async ({
+  page,
+}) => {
+  const { initializeApp, deleteApp } = await import('firebase-admin/app');
+  const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
+  if (
+    !/^(127\.0\.0\.1|localhost):[0-9]+$/.test(
+      process.env.FIRESTORE_EMULATOR_HOST ?? '',
+    )
+  )
+    throw new Error('Local emulator only');
+  const app = initializeApp({ projectId: 'demo-lct-collect' }, 'note-deletion');
+  try {
+    const database = getFirestore(app),
+      collection = database.collection('users/demo-agent/notes');
+    const batch = database.batch();
+    for (const doc of (await collection.get()).docs) batch.delete(doc.ref);
+    for (let i = 0; i < 51; i++) {
+      const noteId = `delete_fixture_${i.toString().padStart(3, '0')}`;
+      batch.set(collection.doc(noteId), {
+        noteId,
+        body: `Retained note ${i}`,
+        createdAt: Timestamp.fromMillis(1700000000000 + i * 1000),
+      });
+    }
+    await batch.commit();
+    await login(page);
+    await page.getByRole('link', { name: 'Notes', exact: true }).click();
+    const pages = page.getByRole('navigation', { name: 'Note pages' });
+    await expect(page.locator('.note-row')).toHaveCount(50);
+    await pages.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.note-row')).toHaveCount(1);
+    await page.getByRole('button', { name: /Retained note 0/ }).click();
+    await page
+      .getByRole('button', { name: 'Delete note', exact: true })
+      .click();
+    let dialog = page.getByRole('dialog', {
+      name: 'Delete note?',
+      exact: true,
+    });
+    await expect(
+      dialog.getByRole('button', { name: 'Keep note' }),
+    ).toBeFocused();
+    await dialog.getByRole('button', { name: 'Keep note' }).click();
+    await expect(
+      page.getByRole('dialog', { name: 'Note', exact: true }),
+    ).toContainText('Retained note 0');
+    await page
+      .getByRole('button', { name: 'Delete note', exact: true })
+      .click();
+    dialog = page.getByRole('dialog', { name: 'Delete note?', exact: true });
+    await noOverflow(page);
+    const audit = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(audit.violations).toEqual([]);
+    await dialog
+      .getByRole('button', { name: 'Delete note', exact: true })
+      .click();
+    await expect(
+      page.getByRole('status', { name: 'Activity update' }),
+    ).toContainText('Note deleted.');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(pages).toContainText('Page 1');
+    await expect(page.locator('.note-row')).toHaveCount(50);
+    await expect(
+      pages.getByRole('button', { name: 'Next', exact: true }),
+    ).toBeDisabled();
+    const archived = await database
+      .doc('users/demo-agent/deletedNotes/delete_fixture_000')
+      .get();
+    expect(archived.data()?.body).toBe('Retained note 0');
+    expect(archived.data()?.deletedAt).toBeTruthy();
+    await page.reload();
+    await expect(page.locator('.note-row')).toHaveCount(50);
+    await expect(
+      page.locator('[data-note-id="delete_fixture_000"]'),
+    ).toHaveCount(0);
+    await page.goto('/agent/notes/?note=delete_fixture_000');
+    await expect(
+      page.getByText('This note is unavailable.', { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await deleteApp(app);
+  }
+});

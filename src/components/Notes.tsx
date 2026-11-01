@@ -3,7 +3,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import type { AgentNote, Member, MemberTag } from '../lib/models';
 import { dateTimeLabel } from '../lib/domain';
-import { completeNote, savePrivateNote } from '../lib/notes';
+import { completeNote, deleteNote, savePrivateNote } from '../lib/notes';
 import { enableReminders, permanentNotesURL } from '../lib/notifications';
 import { reminderLabel, type Reminder } from '../../functions/src/schedule';
 import type { usePagedNotes } from '../hooks/usePagedNotes';
@@ -41,6 +41,7 @@ export default function Notes({
       () => new URLSearchParams(location.search).get('note') ?? '',
     ),
     [selected, setSelected] = useState<AgentNote | null>(null),
+    [confirmDelete, setConfirmDelete] = useState(false),
     [editing, setEditing] = useState(false),
     [edit, setEdit] = useState<{
       body: string;
@@ -51,7 +52,12 @@ export default function Notes({
     [localError, setLocalError] = useState(''),
     [enabled, setEnabled] = useState(false);
   const createId = useRef(''),
-    mutationId = useRef('');
+    mutationId = useRef(''),
+    deleting = useRef(false),
+    deleteMutation = useRef('');
+  useEffect(() => {
+    if (confirmDelete) document.getElementById('keep-note')?.focus();
+  }, [confirmDelete]);
   useEffect(() => {
     const open = (e: Event) => setSelectedId((e as CustomEvent<string>).detail);
     window.addEventListener('open-reminder', open);
@@ -76,14 +82,32 @@ export default function Notes({
     }
     return onSnapshot(
       doc(db(), 'users', uid, 'notes', selectedId),
+      { includeMetadataChanges: true },
       (snap) => {
         if (snap.exists()) setSelected(snap.data() as AgentNote);
-        else setLocalError('This note is unavailable.');
+        else if (!snap.metadata.fromCache) {
+          setSelected(null);
+          setSelectedId('');
+          setConfirmDelete(false);
+          setEditing(false);
+          setEdit(null);
+          if (location.search)
+            history.replaceState(null, '', location.pathname);
+          if (!deleting.current) setLocalError('This note is unavailable.');
+        }
       },
       () => setLocalError('This note is unavailable to this account.'),
     );
   }, [selectedId, uid]);
   function close() {
+    if (busy) return;
+    if (confirmDelete) {
+      setConfirmDelete(false);
+      requestAnimationFrame(() =>
+        document.getElementById('delete-note')?.focus(),
+      );
+      return;
+    }
     const closeNow = () => {
       setSelectedId('');
       setEditing(false);
@@ -228,13 +252,60 @@ export default function Notes({
         focusTarget="note-results"
       />
       {selected && (
-        <Modal title={editing ? 'Edit note' : 'Note'} onClose={close}>
+        <Modal
+          title={
+            confirmDelete ? 'Delete note?' : editing ? 'Edit note' : 'Note'
+          }
+          onClose={close}
+        >
           {error && (
             <p className="field-error" role="alert">
               {error}
             </p>
           )}
-          {editing && edit ? (
+          {confirmDelete ? (
+            <>
+              <p>
+                This note will be removed from your list and its reminders
+                cancelled. A private copy will be retained.
+              </p>
+              <div className="actions">
+                <button
+                  id="keep-note"
+                  className="button outline"
+                  disabled={busy}
+                  onClick={close}
+                >
+                  Keep note
+                </button>
+                <button
+                  className="button danger"
+                  disabled={!writable}
+                  aria-busy={busy}
+                  onClick={() => {
+                    deleting.current = true;
+                    void action(async () => {
+                      try {
+                        await deleteNote(selected, deleteMutation.current);
+                        setSelectedId('');
+                        setSelected(null);
+                        setConfirmDelete(false);
+                        if (location.search)
+                          history.replaceState(null, '', location.pathname);
+                        requestAnimationFrame(() =>
+                          document.getElementById('note-results')?.focus(),
+                        );
+                      } finally {
+                        deleting.current = false;
+                      }
+                    }, 'Note deleted.');
+                  }}
+                >
+                  {busy ? 'Deleting…' : 'Delete note'}
+                </button>
+              </div>
+            </>
+          ) : editing && edit ? (
             <form
               noValidate
               onSubmit={(e) => {
@@ -331,6 +402,17 @@ export default function Notes({
                   Edit note
                 </button>
               </div>
+              <button
+                id="delete-note"
+                className="text-button note-delete"
+                disabled={!writable}
+                onClick={() => {
+                  deleteMutation.current = crypto.randomUUID();
+                  setConfirmDelete(true);
+                }}
+              >
+                Delete note
+              </button>
             </>
           )}
         </Modal>
