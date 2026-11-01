@@ -220,22 +220,18 @@ describe.skipIf(!enabled)('durable financial sync API', () => {
     const sessionId = `${uid}_future`,
       entryId = randomUUID(),
       { Timestamp } = await import('firebase-admin/firestore');
-    await db
-      .doc(`sessions/${sessionId}`)
-      .set({
-        agentId: uid,
-        workday: dayAt(Date.now() + 86400000),
-        startsAt: Timestamp.fromMillis(Date.now() + 3600000),
-        endsAt: Timestamp.fromMillis(Date.now() + 86400000),
-        revision: 0,
-      });
-    await db
-      .doc(`entries/${entryId}`)
-      .set({
-        agentId: uid,
-        sessionId,
-        lines: { deposit: { state: 'active', recorded: false, amount: 10 } },
-      });
+    await db.doc(`sessions/${sessionId}`).set({
+      agentId: uid,
+      workday: dayAt(Date.now() + 86400000),
+      startsAt: Timestamp.fromMillis(Date.now() + 3600000),
+      endsAt: Timestamp.fromMillis(Date.now() + 86400000),
+      revision: 0,
+    });
+    await db.doc(`entries/${entryId}`).set({
+      agentId: uid,
+      sessionId,
+      lines: { deposit: { state: 'active', recorded: false, amount: 10 } },
+    });
     await expect(
       call(
         command('void', `session:${sessionId}`, {
