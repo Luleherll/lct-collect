@@ -1,6 +1,6 @@
 import { orderBy } from 'firebase/firestore';
 import { useLocalRecords } from './useLocal';
-import { usePagination } from './usePagination';
+import { useMemo } from 'react';
 import type { AgentNote } from '../lib/models';
 export function usePagedNotes(uid: string, enabled: boolean) {
   const result = useLocalRecords<AgentNote>(
@@ -9,18 +9,18 @@ export function usePagedNotes(uid: string, enabled: boolean) {
     uid,
     enabled,
   );
-  const data = [...result.data].sort(
-    (a, b) =>
-      (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0) ||
-      b.noteId.localeCompare(a.noteId),
+  // The agenda filters/sorts the complete local list before presenting 50-note pages.
+  const data = useMemo(
+    () =>
+      [...result.data].sort(
+        (a, b) =>
+          (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0) ||
+          b.noteId.localeCompare(a.noteId),
+      ),
+    [result.data],
   );
-  const page = usePagination(data, uid);
   return {
     ...result,
-    data: page.items,
-    page: page.page,
-    previous: page.previous,
-    next: page.next,
-    hasNext: page.page < page.pageCount,
+    data,
   };
 }

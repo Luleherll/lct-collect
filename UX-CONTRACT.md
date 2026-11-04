@@ -59,3 +59,29 @@ profile reads, navigation and refresh must not cycle through temporary sign-out
 or access-loading pages. Cached content stays interactive. Only missing sections
 show loading; first uncached startup has one stable shell. Native date/select,
 shared dialogs, focus restoration and draft discard guards remain canonical.
+
+## Approved Notes agenda and bottom sheet (4 November 2026)
+
+The user-approved draft replaces inline composition, view-before-edit, and list-row
+trash controls. Upcoming sorts unfinished scheduled notes by occurrence before
+50-note pagination, groups by Kampala calendar date (including overdue dates),
+and keeps unfinished notes without reminders in a paginated disclosure. All notes
+includes completed notes in newest-first order. Switching views resets its page;
+removing the last item clamps the page. View state stays in memory for privacy.
+
+The shared Modal owns the modal bottom-sheet variant: native inert background,
+focus containment, titled initial focus, Escape/close and focus restoration. The
+sheet follows the visual viewport; its body scrolls, while title and Cancel/Save
+remain reachable above the keyboard. Members and reminder settings expand inside
+this sheet. The reminder kind uses pressed-state buttons; date/time/weekday
+popups remain OS-owned. Existing notes open directly in the editor, including
+notification/deep links; actions disclose complete/reopen and confirmed soft-delete.
+Deletion initially focuses Keep note, which returns to the original action.
+Closing or cancelling a dirty editor uses the shared discard guard; refresh
+recovers device-persisted text, tags, reminder and edit revision. Successful local
+save closes the sheet and restores its trigger; failure retains the sheet and
+entered values. Schedule changes reset the projected completion/occurrence using
+the same schedule helpers as the server. Mutation/revision protocols are unchanged.
+The bell opens notification settings; only Enable reminders requests permission.
+Only unsynced notes have sync labels. These rules follow the approved draft and
+the existing notes/sync API, with browser evidence in tests/e2e.

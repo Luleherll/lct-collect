@@ -94,24 +94,22 @@ test('offline notes create, edit, complete and delete locally before reconnect',
 }) => {
   await login(page);
   await page.getByRole('link', { name: 'Notes', exact: true }).click();
-  await expect(page.getByLabel('New note', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'All notes', exact: true }).click();
+  await page.getByRole('button', { name: 'New note', exact: true }).click();
   await context.setOffline(true);
-  await page.getByLabel('New note', { exact: true }).fill('Offline queue note');
-  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await page
+    .getByRole('textbox', { name: 'New note', exact: true })
+    .fill('Offline queue note');
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
   const note = page
     .locator('.note-list-row')
     .filter({ hasText: 'Offline queue note' });
   await expect(note).toContainText('Pending sync');
   await note.getByRole('button', { name: /^Offline queue note/ }).click();
-  await page.getByRole('button', { name: 'Edit note', exact: true }).click();
   await page
     .getByLabel('Note text', { exact: true })
     .fill('Offline queue note edited');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(
-    page.getByRole('dialog', { name: 'Note', exact: true }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await note.getByRole('checkbox').click();
   await expect(note.getByRole('checkbox')).toBeChecked();
@@ -122,8 +120,14 @@ test('offline notes create, edit, complete and delete locally before reconnect',
   await expect(note).toContainText('Offline queue note edited');
   await expect(note.getByRole('checkbox')).toBeChecked();
   await context.setOffline(true);
-  await note.getByRole('button', { name: /Delete note:/ }).click();
-  await page.getByRole('button', { name: 'Delete note', exact: true }).click();
+  await note.locator('.note-row').click();
+  const sheet = page.getByRole('dialog', { name: 'Edit note', exact: true });
+  await sheet.getByLabel('Note actions', { exact: true }).click();
+  await sheet.getByRole('button', { name: 'Delete note', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Delete note?', exact: true })
+    .getByRole('button', { name: 'Delete note', exact: true })
+    .click();
   await expect(note).toHaveCount(0);
   await expect(page.getByLabel('Unsynced work')).toBeVisible();
   await context.setOffline(false);

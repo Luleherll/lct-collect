@@ -169,6 +169,56 @@ describe.skipIf(!enabled)(
         (await db.doc(`users/demo-agent/notes/${noteId}`).get()).data()?.dueAt,
       ).toBeNull();
     });
+    it('replaces schedules across kinds and repairs old deep-merged reminder maps', async () => {
+      const noteId = randomUUID(),
+        ref = db.doc(`users/demo-agent/notes/${noteId}`);
+      const weekly = { kind: 'weekly', day: 5, minute: 540 };
+      const once = {
+        kind: 'once',
+        at: Math.ceil((Date.now() + 86400000) / 60000) * 60000,
+      };
+      await call('demo-agent', save(noteId, { reminder: weekly }));
+      const created = (await ref.get()).data()!;
+      await call(
+        'demo-agent',
+        save(noteId, { reminder: once, expectedRevision: 1 }),
+      );
+      expect((await ref.get()).data()?.reminder).toEqual(once);
+      await call(
+        'demo-agent',
+        save(noteId, {
+          body: 'Edit again after changing reminder',
+          reminder: once,
+          expectedRevision: 2,
+        }),
+      );
+      await call(
+        'demo-agent',
+        save(noteId, { reminder: { kind: 'none' }, expectedRevision: 3 }),
+      );
+      expect((await ref.get()).data()?.reminder).toEqual({ kind: 'none' });
+      await call(
+        'demo-agent',
+        save(noteId, { reminder: weekly, expectedRevision: 4 }),
+      );
+      expect((await ref.get()).data()?.reminder).toEqual(weekly);
+      await call(
+        'demo-agent',
+        save(noteId, { reminder: once, expectedRevision: 5 }),
+      );
+      const before = (await ref.get()).data()!;
+      await ref.update({ reminder: { ...weekly, ...once } });
+      await call(
+        'demo-agent',
+        save(noteId, { reminder: once, expectedRevision: 6 }),
+      );
+      const repaired = (await ref.get()).data()!;
+      expect(repaired.reminder).toEqual(once);
+      expect(repaired.scheduleVersion).toBe(before.scheduleVersion);
+      expect(repaired.createdAt.toMillis()).toBe(created.createdAt.toMillis());
+      expect(repaired.uid).toBe('demo-agent');
+      expect(repaired.revision).toBe(7);
+    });
     it('keeps weekly schedule identity on text edits and rejects completion of stale occurrences', async () => {
       const noteId = randomUUID(),
         reminder = { kind: 'weekly', day: 1, minute: 540 };

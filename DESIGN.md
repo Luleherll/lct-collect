@@ -88,3 +88,21 @@ navy/green visual tokens and layout. Show cached working content immediately,
 use section-level loading only for missing data, and never show intermediate
 access/sign-out screens during normal transitions. Durable local acceptance
 uses "Saved on this device" feedback; only unsynced items show sync labels.
+
+Approved Notes redesign (4 November 2026): Upcoming is a date-grouped agenda with
+EAT times, round completion controls, quiet member metadata and a collapsed
+Without a reminder section. All notes retains newest-first browsing, including
+completed notes. Each list presents at most 50 records after filtering. Keep a
+full-width New note action anchored above the safe area. Creation and editing
+use the shared Modal's bottom-sheet variant: the original brand header stays
+behind a dimmed backdrop, and the sheet contains only the editor. Borderless
+18px note text, a live character count and divider-separated Members/Reminder
+rows reproduce the approved draft. Both rows disclose their settings inline;
+None/Once/Weekly uses a segmented button group, with OS-owned date/time/weekday
+inputs. Sheet header and Cancel/Save footer remain outside the internal scroll
+region and follow the visual viewport when the keyboard opens. Use the existing
+16px dialog radius at the top corners; no new palette or typography tokens.
+Delete and complete/reopen actions live in the existing note's action disclosure.
+The bell opens notification setup on demand. This supersedes inline creation,
+view-before-edit and per-row trash guidance above. Durable local saves, recovery,
+revision conflicts, private ownership and unsynced-only indicators remain in force.

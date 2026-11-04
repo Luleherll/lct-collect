@@ -221,9 +221,26 @@ async function manageNoteData(uid: string, data: unknown, command?: Command) {
     }
     let patch: Record<string, unknown>;
     if (input.action === 'save') {
-      const changed =
-        JSON.stringify(parseReminder(old?.reminder ?? { kind: 'none' })) !==
-        JSON.stringify(schedule);
+      // Older deep-merged writes retained fields from the previous reminder kind.
+      // Normalize stored data only; incoming schedules still use strict validation.
+      const prior = old?.reminder;
+      const previous =
+        prior?.kind === 'once'
+          ? { kind: 'once', at: prior.at }
+          : prior?.kind === 'weekly'
+            ? { kind: 'weekly', day: prior.day, minute: prior.minute }
+            : (prior ?? { kind: 'none' });
+      let changed = true;
+      try {
+        changed =
+          JSON.stringify(
+            parseReminder(
+              previous.kind === 'none' ? { kind: 'none' } : previous,
+            ),
+          ) !== JSON.stringify(schedule);
+      } catch {
+        // A validated replacement repairs malformed legacy schedules.
+      }
       let first: number | null = null;
       if (changed || !old) {
         try {
@@ -277,11 +294,12 @@ async function manageNoteData(uid: string, data: unknown, command?: Command) {
             : null;
     }
     storeReceipt({ ...old, ...patch });
-    tx.set(
-      ref,
-      { ...patch, lastMutationId: mutationId, lastMutationHash: signature },
-      { merge: true },
-    );
+    tx.set(ref, {
+      ...old,
+      ...patch,
+      lastMutationId: mutationId,
+      lastMutationHash: signature,
+    });
   });
   return outcome ?? { noteId };
 }

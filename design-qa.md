@@ -36,3 +36,87 @@ Minimalist whole-app pass (25 October, Kampala): Awesome DESIGN.md's Linear stud
 Before/after screenshots cover sign-in, collection, Recent entries, workdays, viewer and owner at 390px and 1280px in `/workspace/lct-ui-evidence/minimal-pass/`, using synthetic emulator records. Automated accessibility coverage is maintained in `tests/e2e/app.spec.ts` for 320px and desktop screens and the review dialog. Automated checks supplement physical-phone and assistive-technology acceptance; they do not establish it.
 
 Validation for this pass: all 21 compiled browser scenarios passed against a clean 820-account emulator seed, including the screen-by-screen accessibility matrix. After the final dialog button-order and result-region refinements, nine focused collection/draft/recording and accessibility cases passed again. Accessibility coverage is now split into six separately reported role/viewport cases (26 total scenarios in CI). All 25 unit/worker tests, 46-file Astro diagnostics, formatting and the static build pass. The strict UI audit has zero findings, and DESIGN.md lint has zero errors (unused mirrored-token warnings only). No financial/security rules changed. The existing large Firebase bundle warning and physical Android/screen-reader acceptance remain outstanding.
+
+## Approved Notes agenda and sheet — 4 November 2026
+
+Source visual truth: the user's approved combined agenda + bottom-sheet drafts:
+`/workspace/generated_images/exec-c03cb1fd-8065-4f6e-a56b-c6e9e717a1fc.png`
+(agenda), `exec-16b335e5-abcf-41ec-8753-b49ea2af5e29.png` (new note), and
+`exec-876e5630-1ac8-4f58-b04f-1523cd6e0ab4.png` (expanded weekly reminder).
+All source images are 852×1846 pixels. They were normalized to a 390×844 CSS
+viewport for comparison with 390×844 Chromium captures at deviceScaleFactor 1.
+App content only; neither source nor implementation includes a device frame.
+
+Implementation evidence, committed for review:
+
+- [Agenda](docs/design/notes/agenda.png)
+- [New note sheet](docs/design/notes/new-note.png)
+- [Weekly reminder sheet](docs/design/notes/weekly-reminder.png)
+
+Full-view comparison boards place normalized source and implementation together
+in `/tmp/lct-notes-agenda-comparison.png`, `/tmp/lct-notes-sheet-comparison.png`
+and `/tmp/lct-notes-weekly-comparison.png`. Both sides were opened and inspected.
+At this normalized size the typography, counters, member rows, reminder inputs
+and persistent footer are readable without a separate magnified crop.
+
+Comparison history:
+
+| Earlier finding                                                                                                 | Fix                                                                                                                | Post-fix evidence                                                        |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| P2: sheet covered too much of the agenda                                                                        | Match the approved sheet's approximately two-thirds height; follow the visual viewport                             | New note and weekly captures above                                       |
+| P2: future rows unnecessarily repeated the time column and displaced the undated section                        | Keep today's time column; put future times in metadata and tighten agenda spacing                                  | Agenda capture; all groups and the undated disclosure fit above New note |
+| P2: focusing a weekly input scrolled note text out of the comparison state; expanded controls crowded the sheet | Compact the editor when options expand, retain the full text, and use a scrollable body with a fixed header/footer | Weekly capture at scroll start; short-viewport interaction test          |
+| P1: native Tab at the final control could leave focus on browser chrome                                         | Extend shared Modal with explicit first/last control cycling                                                       | Keyboard test at 320×400; shared modal browser suite                     |
+
+Required fidelity surfaces:
+
+- **Fonts and typography:** existing Arial/Helvetica stack, 15px semibold agenda
+  subjects, 18px editable text and clear title/metadata hierarchy. Text and member
+  names wrap safely. No additional font download or font swap. The longest sample
+  agenda subject occupies two lines with the platform scrollbar gutter; this is
+  P3 variation in wrapping, with every section still visible.
+- **Spacing and layout rhythm:** plain rows and dividers, anchored New note,
+  rounded sheet top, internal disclosure panels and persistent actions match the
+  chosen composition. The current app's compact identity/navigation header is
+  intentionally retained. Short viewports scroll the body instead of clipping
+  Save or Cancel. No animation or intermediate screen delays opening the editor.
+- **Colors and tokens:** runtime navy/green/white tokens remain canonical. Native
+  inputs retain the established accessible control border; passive dividers stay
+  quiet. Source image shading is not copied into new gradients or token values.
+- **Image quality and assets:** the existing Lusaze brand PNG is reused at a fixed
+  size. Icons use the app's Bootstrap Icons family, including the newly added
+  bell/calendar/chevrons/plus. No generated page raster is used as interface code.
+- **Copy and content:** sample member names and note bodies are synthetic. The
+  live counter correctly reports 50 characters for the sample text (the generated
+  mock's 67 is inaccurate). New notes start without a reminder; the collapsed
+  capture deliberately shows that default instead of preassigning the mock's
+  example reminder. Weekly controls use Friday, 9am, EAT as in the approved state.
+
+Verified workflows use local Firebase emulators and 820 synthetic accounts only:
+create/edit, ten-member tagging controls, Once/Weekly settings and invalid past
+reminder recovery, complete/reopen followed by another save, confirmed soft-delete,
+50-note pagination and final-page clamping, local offline mutations and reconnect,
+text-only and metadata draft recovery, dirty close/Cancel, deep links with another
+saved edit, notification settings, focus containment/restoration, and long text.
+Automated axe checks cover the page and expanded sheet. Viewports include 320×740,
+390×844, 320×400 and 1280×900. The browser design test records page errors and
+asserts none. The full shared-screen suite also passed before the final Notes
+refinements, with the seven affected Notes cases rerun afterward.
+
+The expanded workflow exposed a pre-existing backend map-merge bug when switching
+reminder kinds. Firebase note writes now replace the reminder map, preserving
+other record fields, and repair obsolete stored schedule keys on a validated edit.
+A server regression test checks repeated edits, kind changes and legacy repair.
+
+No actionable P0/P1/P2 visual findings remain. Physical Android/iOS keyboards and
+assistive technology remain device acceptance checks; desktop emulation does not
+establish those. Existing Firebase bundle-size warnings remain outside this Notes
+change. No production deployment or merge is part of this pass.
+
+final result: passed
+
+Final verification: 48 unit/worker tests; 16 Firebase notes/sync API tests; all
+39 browser scenarios before final Notes refinements; all seven affected Notes
+browser scenarios after the final UI and reminder fix. Astro checking, application
+and Functions builds, formatting and the strict UI contract audit pass. The only
+Astro hints are the existing Firebase Messaging deprecations.

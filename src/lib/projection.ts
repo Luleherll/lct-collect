@@ -1,4 +1,5 @@
 import { Timestamp } from 'firebase/firestore';
+import { firstOccurrence } from '../../functions/src/schedule';
 import {
   dayStart,
   newLines,
@@ -99,7 +100,11 @@ export function project(
     const path = `users/${uid}/notes/${d.noteId}`,
       old = r[path];
     if (d.action === 'delete') delete r[path];
-    else if (d.action === 'save')
+    else if (d.action === 'save') {
+      const scheduleChanged =
+        !old ||
+        JSON.stringify(old.reminder ?? { kind: 'none' }) !==
+          JSON.stringify(d.reminder);
       r[path] = {
         ...old,
         noteId: d.noteId,
@@ -109,8 +114,17 @@ export function project(
         done: old?.done ?? false,
         revision: (old?.revision ?? 0) + 1,
         createdAt: old?.createdAt ?? time,
+        ...(scheduleChanged
+          ? {
+              done: false,
+              occurrenceAt:
+                d.reminder.kind === 'once' && d.reminder.at <= c.capturedAt
+                  ? null
+                  : firstOccurrence(d.reminder, c.capturedAt),
+            }
+          : {}),
       };
-    else if (old)
+    } else if (old)
       r[path] = { ...old, done: d.done, revision: (old.revision ?? 0) + 1 };
   }
   return r;

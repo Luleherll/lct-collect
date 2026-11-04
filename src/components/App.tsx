@@ -1618,6 +1618,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             uid={user.uid}
             error={error}
             notes={notes}
+            clearError={() => setError('')}
             members={members.data}
             onDirty={setNoteExtraDirty}
             protect={protect}
@@ -1834,7 +1835,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               autoFocus
               onClick={() => setGuard(null)}
             >
-              Keep entry
+              {guard.label === 'Discard note' ? 'Keep writing' : 'Keep entry'}
             </button>
             <button
               className="button danger"
