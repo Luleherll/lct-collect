@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useLocalVersion } from '../hooks/useLocal';
 import { localState } from '../lib/local';
 import {
@@ -6,7 +6,10 @@ import {
   flush,
   prepareRetry,
   resolveCommand,
+  prepareVoidArchive,
+  archiveRejectedVoid,
 } from '../lib/sync';
+import type { ArchiveReview } from '../lib/queue-review';
 import { LABELS, TYPES } from '../lib/models';
 import { amount, money } from '../lib/domain';
 import Modal from './Modal';
@@ -17,6 +20,8 @@ export default function SyncQueue() {
     [busy, setBusy] = useState(false),
     [proposal, setProposal] = useState<Record<string, any> | null>(null),
     [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [archive, setArchive] = useState<ArchiveReview | null>(null);
+  const archiveTrigger = useRef<HTMLButtonElement>(null);
   const items = localState().commands,
     item = items.find((p) => p.command.id === selected),
     d = proposal ?? item?.command.data;
@@ -25,11 +30,12 @@ export default function SyncQueue() {
       setSelected('');
       setError('');
       setProposal(null);
+      setArchive(null);
     }
   };
   if (!items.length) return null;
   return (
-    <section className="connection" aria-label="Unsynced work">
+    <section className="connection" aria-label="Unsynced work" tabIndex={-1}>
       <details>
         <summary>{items.length} unsynced changes</summary>
         <div className="actions">
@@ -68,6 +74,8 @@ export default function SyncQueue() {
                 className="text-button"
                 onClick={() => {
                   setProposal(null);
+                  setArchive(null);
+                  setError('');
                   setSelected(p.command.id);
                 }}
               >
@@ -78,7 +86,10 @@ export default function SyncQueue() {
         ))}
       </details>
       {item && d && (
-        <Modal title="Review unsynced change" onClose={close}>
+        <Modal
+          title={archive ? 'Archive rejected void?' : 'Review unsynced change'}
+          onClose={close}
+        >
           <p>{item.error}</p>
           {d.member && (
             <p>
@@ -98,7 +109,80 @@ export default function SyncQueue() {
           )}
           {d.reason && <p>Reason: {d.reason}</p>}
           {d.body && <p className="note-body">{d.body}</p>}
-          {proposal && (
+          {archive && (
+            <>
+              <p>
+                This void was rejected and was not applied. Archiving keeps its
+                original details and rejection in the recovery history.
+              </p>
+              <p>
+                Workday: {archive.workday}. Confirmed expected cash: UGX{' '}
+                {money(archive.expectedCash)}.
+              </p>
+              <p>
+                {archive.releaseCount} later{' '}
+                {archive.releaseCount === 1 ? 'change' : 'changes'} will retry
+                unchanged, in order.
+              </p>
+              {!!archive.blockedCount && (
+                <p>
+                  {archive.blockedCount} later{' '}
+                  {archive.blockedCount === 1
+                    ? 'change still needs'
+                    : 'changes still need'}{' '}
+                  review. {archive.blockedReason}
+                </p>
+              )}
+              <div className="actions">
+                <button
+                  type="button"
+                  autoFocus
+                  className="button outline"
+                  disabled={busy}
+                  onClick={() => {
+                    setArchive(null);
+                    requestAnimationFrame(() =>
+                      archiveTrigger.current?.focus(),
+                    );
+                  }}
+                >
+                  Keep in queue
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy}
+                  aria-busy={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError('');
+                    try {
+                      await archiveRejectedVoid(archive);
+                      setArchive(null);
+                      setSelected('');
+                      requestAnimationFrame(() =>
+                        (
+                          document.querySelector<HTMLElement>(
+                            '[aria-label="Unsynced work"]',
+                          ) ?? document.getElementById('main-content')
+                        )?.focus({ preventScroll: true }),
+                      );
+                    } catch (e) {
+                      setError((e as Error).message);
+                      setArchive(null);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  {busy
+                    ? 'Archiving…'
+                    : 'Archive void and release eligible changes'}
+                </button>
+              </div>
+            </>
+          )}
+          {!archive && proposal && (
             <form
               noValidate
               onSubmit={async (e) => {
@@ -155,7 +239,7 @@ export default function SyncQueue() {
               </button>
             </form>
           )}
-          {!proposal && (
+          {!archive && !proposal && (
             <button
               className="button"
               disabled={busy}
@@ -180,6 +264,30 @@ export default function SyncQueue() {
               Refresh details
             </button>
           )}
+          {!archive &&
+            item.command.kind === 'void' &&
+            localState().receipts[item.command.id]?.status === 'rejected' && (
+              <button
+                ref={archiveTrigger}
+                type="button"
+                className="button outline"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    setArchive(await prepareVoidArchive(item.command.id));
+                    setProposal(null);
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                Review archive and later changes
+              </button>
+            )}
           {error && <p role="alert">{error}</p>}
           <p>
             Financial corrections that are no longer eligible require the

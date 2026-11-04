@@ -159,3 +159,38 @@ and assistive-technology acceptance remain as previously recorded.
 No actionable P0/P1/P2 findings remain for this follow-up.
 
 final result: passed
+
+## Financial recovery P1 fixes — 4 November 2026
+
+Both reported races were reproduced before correction. Local query snapshots now
+survive in a durable buffer until their active projections settle. Acknowledgement
+updates records, removes the projection and applies newer held snapshots in the
+same device transaction. Rejection releases authoritative data for the blocked
+scope. Removal snapshots and duplicate acknowledgement are covered as well.
+
+SyncQueue extends the existing shared Modal review pattern with an explicit
+Archive rejected void confirmation. The [320px browser capture](docs/design/sync/archive-rejected-void.png)
+was opened and inspected: reason, date, confirmed cash, eligible later-work count,
+safe Keep in queue action, primary archive/release action and recovery export are
+readable and fit the internally scrolling dialog. Existing typography, navy/green
+palette, buttons, modal backdrop and focus owner are retained. No new design
+tokens or unrelated visual changes are introduced. Cancel preserves all commands
+and restores the review trigger; successful archival restores a remaining queue
+or the main reading context. Axe checks pass for the confirmation.
+
+The full clean-seed browser suite passes all 42 cases. New scenarios use two
+independent browser contexts with a deliberately delayed receipt and a disconnected
+reload, and an actual permanently rejected offline void followed by a valid late
+deposit. They verify the newer cash remains visible without an unsynced warning,
+archive cancellation is non-destructive, the original rejection/payload survives,
+the original financial line is still active, and the descendant posts exactly once
+under its original workday. All 60 unit/worker tests and 17 Firebase API tests pass.
+Typecheck, application build, formatting and the strict UI audit pass. The initial
+combined API/browser run exposed fixture pollution (the API adds a member that
+conflicts with the 820-account directory seed); browser verification was rerun
+in a clean emulator instance, matching CI's isolated jobs.
+
+The browser tests use synthetic local-emulator data only. Physical device and
+assistive-technology acceptance remain as previously recorded.
+
+final result: passed

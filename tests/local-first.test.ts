@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase/firestore';
 import {
   mergeServerScope,
+  acknowledge,
+  mergeServerRecords,
   changeLocal,
   clearLocal,
   localState,
@@ -152,8 +154,7 @@ describe('durable local-first operations', () => {
       ].expectedCash,
     ).toBe(150);
     await changeLocal((s) => {
-      reconcile(s, confirmed);
-      s.commands = [];
+      acknowledge(s, entry.id, { records: confirmed }, uid);
     });
     expect(localState().records[`sessions/${sessionId}`].expectedCash).toBe(
       150,
@@ -177,5 +178,134 @@ describe('durable local-first operations', () => {
       [path]: { noteId: 'legacy-note', body: 'Edited body', revision: 1 },
     });
     expect(s.records[path]).toMatchObject({ body: 'Edited body', revision: 1 });
+  });
+  it('persists a newer held balance across reload and applies it after an older receipt without another snapshot', async () => {
+    const path = `sessions/${sessionId}`;
+    await changeLocal((s) => {
+      s.records = project({}, start, uid);
+      s.commands = [{ command: entry, state: 'pending', error: '' }];
+      mergeServerScope(
+        s,
+        'live',
+        { [path]: { ...s.records[path], revision: 3, expectedCash: 200 } },
+        uid,
+      );
+      mergeServerScope(
+        s,
+        'other-listener',
+        { [path]: { ...s.records[path], revision: 2, expectedCash: 150 } },
+        uid,
+      );
+    });
+    await openLocal(uid, 'demo-local');
+    expect(localState().heldRecords?.[path].revision).toBe(3);
+    await changeLocal((s) =>
+      acknowledge(
+        s,
+        entry.id,
+        {
+          records: {
+            [path]: { ...s.records[path], revision: 1, expectedCash: 150 },
+            'entries/entry-test': { entryId: 'entry-test' },
+          },
+        },
+        uid,
+      ),
+    );
+    expect(localState().records[path]).toMatchObject({
+      revision: 3,
+      expectedCash: 200,
+    });
+    expect(localState().commands).toHaveLength(0);
+    expect(localState().heldRecords).toEqual({});
+    await openLocal(uid, 'demo-local');
+    expect(localState().records[path].expectedCash).toBe(200);
+  });
+  it('keeps a shared session snapshot held until every pending entry settles, without double counting', () => {
+    const path = `sessions/${sessionId}`,
+      s = localState();
+    s.records = project({}, start, uid);
+    const next = {
+      ...entry,
+      id: 'second-command',
+      data: {
+        ...entry.data,
+        entryId: 'second-entry',
+        values: { deposit: 25, withdrawal: 0, loanInstalment: 0 },
+      },
+      dependsOn: entry.id,
+    };
+    s.commands = [entry, next].map((command) => ({
+      command,
+      state: 'pending',
+      error: '',
+    }));
+    const first = project(s.records, entry, uid),
+      second = project(first, next, uid);
+    mergeServerRecords(
+      s,
+      { [path]: { ...second[path], revision: 4, expectedCash: 185 } },
+      uid,
+    );
+    acknowledge(s, entry.id, { records: first }, uid);
+    expect(visible(s.records, s.commands, uid)[path].expectedCash).toBe(175);
+    expect(s.heldRecords?.[path].expectedCash).toBe(185);
+    acknowledge(s, next.id, { records: second }, uid);
+    expect(visible(s.records, s.commands, uid)[path].expectedCash).toBe(185);
+    expect(s.heldRecords).toEqual({});
+  });
+  it('does not apply a held snapshot older than a later successful receipt', () => {
+    const s = localState(),
+      path = `sessions/${sessionId}`;
+    s.records = project({}, start, uid);
+    s.commands = [{ command: entry, state: 'pending', error: '' }];
+    mergeServerRecords(s, { [path]: { revision: 2, expectedCash: 150 } }, uid);
+    acknowledge(
+      s,
+      entry.id,
+      { records: { [path]: { revision: 4, expectedCash: 250 } } },
+      uid,
+    );
+    expect(s.records[path]).toEqual({ revision: 4, expectedCash: 250 });
+  });
+  it('retains a held deletion and cannot resurrect it through a duplicate acknowledgement', () => {
+    const s = localState(),
+      path = `users/${uid}/notes/note-one`;
+    const save = {
+      ...entry,
+      id: 'note-save',
+      kind: 'note' as const,
+      scope: 'note:note-one',
+      data: { noteId: 'note-one', action: 'save' },
+    };
+    s.records[path] = { revision: 1, body: 'Original' };
+    s.scopes.notes = [path];
+    s.commands = [{ command: save, state: 'pending', error: '' }];
+    mergeServerScope(s, 'notes', {}, uid);
+    expect(s.heldRecords?.[path]).toBeNull();
+    const receipt = { records: { [path]: { revision: 2, body: 'Edited' } } };
+    acknowledge(s, save.id, receipt, uid);
+    acknowledge(s, save.id, receipt, uid);
+    expect(s.records[path]).toBeUndefined();
+    expect(s.heldRecords).toEqual({});
+  });
+  it('releases newer authoritative data when rejection blocks the entire provisional scope', () => {
+    const s = localState(),
+      path = `sessions/${sessionId}`;
+    s.records = project({}, start, uid);
+    s.commands = [
+      { command: entry, state: 'pending', error: '' },
+      { command: { ...entry, id: 'tail' }, state: 'pending', error: '' },
+    ];
+    mergeServerRecords(s, { [path]: { revision: 3, expectedCash: 200 } }, uid);
+    acknowledge(
+      s,
+      entry.id,
+      { status: 'rejected', message: 'Not eligible', records: {} },
+      uid,
+    );
+    expect(visible(s.records, s.commands, uid)[path].expectedCash).toBe(200);
+    expect(s.commands).toHaveLength(2);
+    expect(s.heldRecords).toEqual({});
   });
 });

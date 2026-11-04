@@ -97,3 +97,25 @@ first closes results and restores input focus. Outside focus/pointer dismisses
 results. Clearing/selecting dismisses immediately. SearchField owns the input and
 its result relationship. Pagination buttons explicitly use type=button so member
 search pages inside a note form cannot submit it.
+
+## Financial reconciliation and terminal void recovery
+
+Following the reviewed P1 findings, authoritative query changes affecting active
+projections are retained in IndexedDB and released atomically with acknowledgement.
+A later server revision must remain visible after an older receipt, including when
+the device disconnects or reloads before receiving another snapshot. Duplicate
+acknowledgements cannot resurrect a subsequently removed record.
+
+SyncQueue offers an explicit reviewed archive only for a server-confirmed rejected
+void. Modal shows its reason, workday, refreshed expected cash and the count of
+later changes eligible to retry; Keep in queue initially receives focus. Cancel
+retains every queued ID and restores the trigger. Confirmation keeps the original
+payload/rejection in device recovery history, releases only an eligible prefix in
+capture order, and preserves captured dates, financial entry IDs and amounts.
+Unsafe later work remains Needs attention for a separate review. Changed queue,
+records or eligibility invalidate the review. Browser sync locks and a transactional
+comparison protect concurrent tabs. Uncertain delivery always retries the original
+immutable reference. No client archive alters server void cutoffs or financial
+permissions. Business sources: docs/LOCAL_FIRST.md, functions/src/sync.ts and
+functions/src/protocol.ts. Regression evidence: tests/local-first.test.ts,
+tests/queue-review.test.ts, tests/sync-api.test.ts and tests/e2e/sync-recovery.spec.ts.

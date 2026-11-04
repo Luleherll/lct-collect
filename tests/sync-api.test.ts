@@ -111,6 +111,78 @@ describe.skipIf(!enabled)('durable financial sync API', () => {
       code: 'failed-precondition',
     });
   });
+  it('keeps an expired void rejected while a reviewed descendant posts once under its original workday', async () => {
+    const captured = Date.now() - 3 * 86400000,
+      day = dayAt(captured),
+      sessionId = `${uid}_${day}`,
+      scope = `session:${sessionId}`;
+    const start = command('session', scope, {
+      sessionId,
+      workday: day,
+      openingCash: 100,
+    });
+    start.capturedAt = captured;
+    await call(start);
+    const original = command('entry', scope, {
+      sessionId,
+      entryId: randomUUID(),
+      member: {
+        memberId: 'sync-member',
+        fullName: 'Sync Member',
+        accountNumber: '123456',
+        uniqueNumber: 'LCT123',
+      },
+      values: { deposit: 50, withdrawal: 0, loanInstalment: 0 },
+      note: '',
+      accountTypes: {},
+    });
+    original.capturedAt = captured;
+    await call(original);
+    const voided = command('void', scope, {
+      sessionId,
+      entryId: original.data.entryId,
+      type: 'deposit',
+      reason: 'Offline void before cutoff',
+    });
+    voided.capturedAt = captured;
+    await expect(call(voided)).resolves.toMatchObject({ status: 'rejected' });
+    const blocked = command('entry', scope, {
+      ...original.data,
+      entryId: randomUUID(),
+      values: { deposit: 25, withdrawal: 0, loanInstalment: 0 },
+    });
+    blocked.capturedAt = captured;
+    blocked.dependsOn = voided.id;
+    await expect(call(blocked)).resolves.toMatchObject({ status: 'rejected' });
+    const reviewed = {
+      ...blocked,
+      id: randomUUID(),
+      supersedes: blocked.id,
+      dependsOn: null,
+    };
+    await expect(call(reviewed)).resolves.not.toHaveProperty(
+      'status',
+      'rejected',
+    );
+    await call(reviewed);
+    await expect(call(voided)).resolves.toMatchObject({ status: 'rejected' });
+    await expect(call(blocked)).resolves.toMatchObject({ status: 'rejected' });
+    const session = (await db.doc(`sessions/${sessionId}`).get()).data()!;
+    expect(session.expectedCash).toBe(175);
+    expect(
+      (await db.doc(`entries/${original.data.entryId}`).get()).data()!.lines
+        .deposit.state,
+    ).toBe('active');
+    const late = (
+      await db.doc(`entries/${blocked.data.entryId}`).get()
+    ).data()!;
+    expect(late.capturedAt.toMillis()).toBe(captured);
+    expect(late.lateSubmission).toBe(true);
+    expect(
+      (await db.collection('entries').where('sessionId', '==', sessionId).get())
+        .size,
+    ).toBe(2);
+  });
   it('rejects role spoofing and invalid cash', async () => {
     const day = dayAt(Date.now()),
       sessionId = `${uid}_${day}`,

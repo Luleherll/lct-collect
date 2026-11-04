@@ -114,3 +114,31 @@ release does not mean `syncOperation` is deployed. Before field sync acceptance,
 verify the callable endpoint in staging and deploy the reviewed backend through
 an authorized identity. Do not weaken OIDC branch/workflow restrictions to let
 feature-branch code impersonate the permanent staging deployment identity.
+
+## Reconciliation and rejected-void recovery
+
+Newer query snapshots touching a provisional record are stored durably in
+`heldRecords`, including removals. Their revisions cannot be replaced by older
+snapshots. A successful receipt, removal of its projection, and release of held
+records commit in the same IndexedDB transaction. A shared session remains held
+until all active commands affecting it settle. Rejected scopes have no provisional
+cash effects, so their newer confirmed snapshots can be released for review.
+Duplicate acknowledgements cannot resurrect a record deleted after its first
+acknowledgement.
+
+A server-confirmed rejected void can be explicitly archived from **Review change**
+→ **Review archive and later changes**. The app refreshes the session, affected
+entries and member identities, shows confirmed cash and the number of later
+changes eligible to retry, and requires confirmation. It never archives uncertain
+delivery. Archiving preserves the original payload and rejection in device recovery
+history; it does not void a line or change the session's financial rules.
+
+Later commands retain their captured times, workday, entry references and amounts.
+Only their submission IDs/dependencies are replaced, with supersession links to the
+originals. Eligibility is checked in order against refreshed confirmed cash. The
+first unsafe descendant remains **Needs attention**, blocking later work until a
+separate review. Changed member identity is never silently substituted. A change
+to the queue, refreshed records or eligibility between review and confirmation
+requires a fresh review. The same browser sync lock and an atomic queue comparison
+prevent concurrent tabs from replaying or dropping work during recovery. The
+server continues to validate every retry and retains all old terminal receipts.

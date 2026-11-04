@@ -14,10 +14,20 @@ import {
   localOwner,
   namespace,
   localState,
-  reconcile,
+  acknowledge,
+  mergeServerRecords,
+  releaseHeldRecords,
   unpack,
 } from './local';
 import { project, visible } from './projection';
+import {
+  archivePaths,
+  rejectedVoidScope,
+  planVoidArchive,
+  applyVoidArchive,
+  requeueReviewed,
+  type ArchiveReview,
+} from './queue-review';
 import type { Command, Outcome, Kind } from '../../functions/src/protocol';
 let service: ReturnType<typeof getFunctions>;
 function api() {
@@ -102,6 +112,7 @@ function deviceId() {
   }
   return id;
 }
+let reviewing = false;
 let running = false,
   stopped = false,
   accessPaused = false,
@@ -135,6 +146,7 @@ export async function flush(force = false) {
   if (force) accessPaused = false;
   if (
     accessPaused ||
+    reviewing ||
     running ||
     stopped ||
     !navigator.onLine ||
@@ -152,7 +164,12 @@ export async function flush(force = false) {
     didRun = true;
     const blocked = new Set<string>();
     for (const item of [...localState().commands]) {
-      if (stopped || owner !== localOwner() || uid !== auth.currentUser?.uid)
+      if (
+        reviewing ||
+        stopped ||
+        owner !== localOwner() ||
+        uid !== auth.currentUser?.uid
+      )
         break;
       const c = item.command;
       if (item.state === 'attention') {
@@ -172,20 +189,8 @@ export async function flush(force = false) {
         )(c);
         if (owner !== localOwner()) break;
         await changeLocal((s) => {
-          const outcome = unpack(result.data);
-          if (outcome.status === 'rejected') {
-            s.receipts[c.id] = outcome;
-            const p = s.commands.find((p) => p.command.id === c.id);
-            if (p) {
-              p.state = 'attention';
-              p.error = outcome.message ?? 'Review this change.';
-            }
-            blocked.add(c.scope);
-            return;
-          }
-          reconcile(s, outcome.records);
-          s.receipts[c.id] = outcome;
-          s.commands = s.commands.filter((p) => p.command.id !== c.id);
+          acknowledge(s, c.id, unpack(result.data), uid);
+          if (result.data.status === 'rejected') blocked.add(c.scope);
         }, owner);
         if (result.data.status === 'rejected') await refreshCommand(c, owner);
         failures = 0;
@@ -219,6 +224,7 @@ export async function flush(force = false) {
             p.state = permanent ? 'attention' : 'pending';
             p.error = error.message ?? 'Could not connect.';
           }
+          if (permanent) releaseHeldRecords(s, uid);
         }, owner);
         if (permanent) {
           blocked.add(c.scope);
@@ -297,70 +303,86 @@ async function refreshCommand(c: Command, owner = localOwner()) {
       return [path, snap.exists() ? snap.data() : null] as const;
     }),
   );
-  await changeLocal((s) => reconcile(s, Object.fromEntries(records)), owner);
+  await changeLocal(
+    (s) => mergeServerRecords(s, Object.fromEntries(records), uid),
+    owner,
+  );
+}
+async function reviewLock<T>(run: (owner: string, uid: string) => Promise<T>) {
+  const owner = localOwner(),
+    uid = auth.currentUser?.uid;
+  if (!uid || owner !== namespace(uid, String(auth.app.options.projectId)))
+    throw new Error('Account changed. Sign in again.');
+  if (reviewing) throw new Error('A review is already in progress.');
+  if (!navigator.locks && running)
+    throw new Error('Sync is running. Wait a moment and review again.');
+  reviewing = true;
+  try {
+    const guarded = async () => {
+      if (owner !== localOwner() || uid !== auth.currentUser?.uid)
+        throw new Error('Account changed. Reopen the review.');
+      return run(owner, uid);
+    };
+    return navigator.locks
+      ? await navigator.locks.request(`lct-sync:${owner}`, guarded)
+      : await guarded();
+  } finally {
+    reviewing = false;
+    void flush();
+  }
 }
 export async function resolveCommand(
   id: string,
   reviewedData?: Record<string, any>,
 ) {
-  const owner = localOwner(),
-    p = localState().commands.find((p) => p.command.id === id);
-  if (!p || p.state !== 'attention') return;
-  if (localState().receipts[id]?.status !== 'rejected') {
-    await changeLocal((s) => {
-      const p = s.commands.find((p) => p.command.id === id);
-      if (p) p.state = 'pending';
-    }, owner);
-    void flush();
-    return;
-  }
-  await refreshCommand(p.command, owner);
-  const pScope = p.command.scope;
-  const uid = auth.currentUser!.uid;
-  await changeLocal((s) => {
-    const affected = s.commands.filter((p) => p.command.scope === pScope),
-      map = new Map<string, string>();
-    s.resolved = [
-      ...(s.resolved ?? []),
-      ...structuredClone(
-        affected.map((p) => ({
-          command: JSON.parse(JSON.stringify(p.command)),
-          state: p.state,
-          error: p.error,
-        })),
-      ),
-    ];
-    for (const pending of affected) {
-      const old = pending.command,
-        nextId = crypto.randomUUID(),
-        data = { ...(old.id === id && reviewedData ? reviewedData : old.data) };
-      if (old.kind === 'record')
-        data.expectedRevision =
-          s.records[`entries/${data.entryId}`]?.lines[data.type]
-            ?.recordingRevision ?? 0;
-      if (old.kind === 'note') {
-        data.expectedRevision =
-          s.records[`users/${uid}/notes/${data.noteId}`]?.revision ?? 0;
-        data.occurrenceAt =
-          s.records[`users/${uid}/notes/${data.noteId}`]?.occurrenceAt ?? null;
-        data.mutationId = nextId;
-      }
-      const command: Command = {
-        ...old,
-        id: nextId,
-        supersedes: old.id,
-        sequence: ++s.sequence,
-        dependsOn:
-          old.id === id ? null : (map.get(old.dependsOn ?? '') ?? null),
-        data,
-      };
-      map.set(old.id, nextId);
-
-      pending.command = command;
-      pending.state = 'pending';
-      pending.error = '';
+  await reviewLock(async (owner, uid) => {
+    const p = localState().commands.find((p) => p.command.id === id);
+    if (!p || p.state !== 'attention') return;
+    if (localState().receipts[id]?.status !== 'rejected' && !p.requiresReview) {
+      await changeLocal((s) => {
+        const pending = s.commands.find((p) => p.command.id === id);
+        if (pending) pending.state = 'pending';
+      }, owner);
+      return;
     }
+    await refreshCommand(p.command, owner);
+    await changeLocal((s) => requeueReviewed(s, id, uid, reviewedData), owner);
+  });
+  void flush();
+}
+async function refreshArchive(id: string, owner: string, uid: string) {
+  const items = rejectedVoidScope(localState(), id, uid);
+  const before = JSON.stringify(items);
+  const records = await Promise.all(
+    archivePaths(items, uid).map(async (path) => {
+      try {
+        const snap = await getDocFromServer(doc(db(), path));
+        return [path, snap.exists() ? snap.data() : null] as const;
+      } catch (error: any) {
+        if (
+          path.startsWith('members/') &&
+          ['permission-denied', 'not-found'].includes(error.code)
+        )
+          return [path, null] as const;
+        throw error;
+      }
+    }),
+  );
+  await changeLocal((s) => {
+    if (JSON.stringify(rejectedVoidScope(s, id, uid)) !== before)
+      throw new Error('Later work changed. Refresh the archive review.');
+    mergeServerRecords(s, Object.fromEntries(records), uid);
   }, owner);
+  return planVoidArchive(localState(), id, uid);
+}
+export async function prepareVoidArchive(id: string): Promise<ArchiveReview> {
+  return reviewLock((owner, uid) => refreshArchive(id, owner, uid));
+}
+export async function archiveRejectedVoid(review: ArchiveReview) {
+  await reviewLock(async (owner, uid) => {
+    await refreshArchive(review.id, owner, uid);
+    await changeLocal((s) => applyVoidArchive(s, review, uid), owner);
+  });
   void flush();
 }
 

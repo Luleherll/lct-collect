@@ -5,10 +5,17 @@ export interface Pending {
   command: Command;
   state: 'pending' | 'syncing' | 'attention';
   error: string;
+  requiresReview?: boolean;
+}
+export interface Resolved extends Pending {
+  resolution?: 'archived' | 'replaced';
+  resolvedAt?: number;
+  replacementId?: string | null;
 }
 export interface LocalState {
-  resolved?: Pending[];
+  resolved?: Resolved[];
   drafts?: Record<string, any>;
+  heldRecords?: Record<string, any | null>;
   records: Record<string, any>;
   scopes: Record<string, string[]>;
   commands: Pending[];
@@ -219,28 +226,87 @@ export async function clearLocal() {
   closeLocal();
   channel?.postMessage(key);
 }
-export function reconcile(s: LocalState, records: Record<string, any | null>) {
+function recordRevision(path: string, value: any): number {
+  return path.startsWith('entries/')
+    ? (value?.financialRevision ?? 0) +
+        Object.values(value?.lines ?? {}).reduce<number>(
+          (total, line: any) => total + (line.recordingRevision ?? 0),
+          0,
+        )
+    : (value?.revision ?? 0);
+}
+export function reconcile(
+  s: Pick<LocalState, 'records'>,
+  records: Record<string, any | null>,
+) {
   for (const [path, value] of Object.entries(records)) {
     const old = s.records[path];
-    // Older receipts must not roll back a newer live snapshot.
-    const rev = (v: any) =>
-      path.startsWith('sessions/')
-        ? (v?.revision ?? 0)
-        : path.startsWith('entries/')
-          ? [
-              v?.financialRevision ?? 0,
-              ...Object.values(v?.lines ?? {}).map(
-                (l: any) => l.recordingRevision ?? 0,
-              ),
-            ].reduce((a, b) => a + b, 0)
-          : (v?.revision ?? 0);
     if (value === null) delete s.records[path];
-    else if (!old || rev(value) === undefined || rev(value) >= rev(old))
+    else if (!old || recordRevision(path, value) >= recordRevision(path, old))
       s.records[path] = value;
   }
 }
-
-/** Hold live changes touched by local commands until their atomic server receipt. */
+function pendingPaths(s: LocalState, uid: string) {
+  // Attention scopes have no provisional effects; their refreshed server base is safe to show.
+  const blocked = new Set(
+    s.commands
+      .filter((p) => p.state === 'attention')
+      .map((p) => p.command.scope),
+  );
+  return new Set(
+    s.commands
+      .filter((p) => !blocked.has(p.command.scope))
+      .flatMap((p) => affectedPaths(p.command, uid)),
+  );
+}
+export function releaseHeldRecords(s: LocalState, uid: string) {
+  const held = pendingPaths(s, uid);
+  for (const [path, value] of Object.entries(s.heldRecords ?? {})) {
+    if (held.has(path)) continue;
+    reconcile(s, { [path]: value });
+    delete s.heldRecords![path];
+  }
+}
+/** Persist live data until all provisional effects touching it have settled. */
+export function mergeServerRecords(
+  s: LocalState,
+  records: Record<string, any | null>,
+  uid: string,
+) {
+  const buffer = (s.heldRecords ??= {});
+  for (const [path, value] of Object.entries(records)) {
+    const previous = buffer[path];
+    if (
+      value === null ||
+      previous == null ||
+      recordRevision(path, value) >= recordRevision(path, previous)
+    )
+      buffer[path] = value;
+  }
+  releaseHeldRecords(s, uid);
+}
+/** Receipt, projection removal and held snapshots commit in one device transaction. */
+export function acknowledge(
+  s: LocalState,
+  id: string,
+  outcome: Outcome,
+  uid: string,
+) {
+  const pending = s.commands.find((p) => p.command.id === id);
+  // Another tab may already have acknowledged this exact immutable command.
+  if (s.receipts[id] && !pending) return;
+  s.receipts[id] = outcome;
+  if (outcome.status === 'rejected') {
+    if (pending) {
+      pending.state = 'attention';
+      pending.error = outcome.message ?? 'Review this change.';
+    }
+  } else {
+    reconcile(s, outcome.records);
+    s.commands = s.commands.filter((p) => p.command.id !== id);
+  }
+  releaseHeldRecords(s, uid);
+}
 export function mergeServerScope(
   s: LocalState,
   scope: string,
@@ -248,19 +314,10 @@ export function mergeServerScope(
   uid: string,
   removeMissing = true,
 ) {
-  const held = new Set(
-    s.commands
-      .filter((p) => p.state !== 'attention')
-      .flatMap((p) => affectedPaths(p.command, uid)),
-  );
+  const incoming = { ...records };
   if (removeMissing)
     for (const path of s.scopes[scope] ?? [])
-      if (!(path in records) && !held.has(path)) delete s.records[path];
-  reconcile(
-    s,
-    Object.fromEntries(
-      Object.entries(records).filter(([path]) => !held.has(path)),
-    ),
-  );
+      if (!(path in records)) incoming[path] = null;
+  mergeServerRecords(s, incoming, uid);
   s.scopes[scope] = Object.keys(records);
 }
