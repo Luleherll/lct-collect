@@ -85,3 +85,15 @@ the same schedule helpers as the server. Mutation/revision protocols are unchang
 The bell opens notification settings; only Enable reminders requests permission.
 Only unsynced notes have sync labels. These rules follow the approved draft and
 the existing notes/sync API, with browser evidence in tests/e2e.
+
+The user's 4 November follow-up sets the Notes sheet to 90% of screen height,
+with a smaller cap above a visible keyboard. AnchoredResults owns collision-aware
+member-result placement: compare space above/below the input within the dialog
+header, sticky footer and visual viewport; use the larger side and constrain the
+scrollable popup there. Resize/scroll and keyboard viewport changes reposition it.
+The popup remains a descendant of the modal dialog. Arrow keys reach and traverse
+matches; Enter in member search selects a match without saving the note; Escape
+first closes results and restores input focus. Outside focus/pointer dismisses
+results. Clearing/selecting dismisses immediately. SearchField owns the input and
+its result relationship. Pagination buttons explicitly use type=button so member
+search pages inside a note form cannot submit it.

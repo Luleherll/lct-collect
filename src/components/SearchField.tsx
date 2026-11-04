@@ -5,6 +5,7 @@ export default function SearchField({
   onChange,
   label,
   id,
+  controls,
   disabled = false,
   placeholder = 'Name or account number',
 }: {
@@ -12,6 +13,7 @@ export default function SearchField({
   onChange: (value: string) => void;
   label: string;
   id?: string;
+  controls?: string;
   disabled?: boolean;
   placeholder?: string;
 }) {
@@ -24,6 +26,7 @@ export default function SearchField({
         ref={ref}
         id={id}
         aria-label={label}
+        aria-controls={controls}
         placeholder={placeholder}
         value={value}
         disabled={disabled}

@@ -284,3 +284,97 @@ test('note sheet recovers drafts, expands settings, traps focus and keeps action
   ).toHaveValue('Collect the missing documents');
   expect(errors).toEqual([]);
 });
+
+test('note member results follow the available space and remain usable above the keyboard', async ({
+  page,
+}) => {
+  await fixture();
+  await open(page);
+  await page.getByRole('button', { name: 'New note', exact: true }).click();
+  const sheet = page.getByRole('dialog', { name: 'New note', exact: true });
+  const box = await sheet.boundingBox();
+  expect(box!.height).toBeCloseTo(844 * 0.9, 0);
+  await sheet
+    .getByRole('textbox', { name: 'New note', exact: true })
+    .fill('Prepare for the next collection.');
+  await sheet.getByRole('button', { name: 'Members', exact: true }).click();
+  const search = sheet.getByRole('textbox', {
+    name: 'Tag members by name or number',
+    exact: true,
+  });
+  await search.fill('LCT');
+  const results = sheet.getByRole('region', {
+    name: 'Matching members',
+    exact: true,
+  });
+  await expect(results).toHaveAttribute('data-side', 'below');
+  const anchor = search.locator('..');
+  const down = await results.boundingBox(),
+    field = await anchor.boundingBox();
+  expect(down!.y).toBeGreaterThanOrEqual(field!.y + field!.height);
+  expect(down!.y + down!.height).toBeLessThanOrEqual(
+    (await sheet.locator('.sheet-footer').boundingBox())!.y,
+  );
+  // Paging a member search inside a note form must never submit the note.
+  await results.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(sheet).toBeVisible();
+  await expect(results).toContainText('Page 2');
+  await search.fill('LCT002');
+  await page.screenshot({ path: join(evidence, 'notes-members-below.png') });
+  // Model a mobile keyboard reducing only the visual viewport, not the layout viewport.
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport!, 'height', {
+      configurable: true,
+      value: 450,
+    });
+    window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect(results).toHaveAttribute('data-side', 'above');
+  await expect
+    .poll(async () => {
+      const panel = await results.boundingBox(),
+        input = await anchor.boundingBox(),
+        header = await sheet.locator('.dialog-head').boundingBox();
+      return (
+        panel!.y >= header!.y + header!.height &&
+        panel!.y + panel!.height <= input!.y
+      );
+    })
+    .toBe(true);
+  await page.screenshot({
+    path: join(evidence, 'notes-members-above-keyboard.png'),
+  });
+  await search.press('ArrowDown');
+  await expect(results.locator('.tag-result').first()).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(results).toHaveCount(0);
+  await expect(search).toBeFocused();
+  await expect(sheet).toBeVisible();
+  await search.fill('LCT003');
+  await search.press('Enter');
+  await expect(results).toHaveCount(0);
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('.note-tags')).toContainText('LCT003');
+  await search.fill('no-match-for-this-member');
+  await expect(results).toContainText('No members found');
+  await search.press('Escape');
+  await search.fill('LCT004');
+  await sheet.getByRole('button', { name: 'Reminder', exact: true }).click();
+  await expect(results).toHaveCount(0);
+  await page.evaluate(() => {
+    delete (window.visualViewport as unknown as Record<string, unknown>).height;
+    window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await search.fill('LCT005');
+  await page.setViewportSize({ width: 320, height: 500 });
+  await expect(results).toHaveAttribute('data-side', 'above');
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  const audit = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(audit.violations).toEqual([]);
+});

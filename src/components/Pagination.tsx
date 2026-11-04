@@ -43,6 +43,7 @@ export default function Pagination({
   return (
     <nav className="pagination" aria-label={label}>
       <button
+        type="button"
         className="button outline small"
         disabled={busy || !hasPrevious}
         onClick={() => navigate(onPrevious)}
@@ -54,6 +55,7 @@ export default function Pagination({
         {pageCount !== undefined && <> of {pageCount}</>}
       </span>
       <button
+        type="button"
         className="button outline small"
         disabled={busy || !hasNext}
         onClick={() => navigate(onNext)}

@@ -106,3 +106,12 @@ Delete and complete/reopen actions live in the existing note's action disclosure
 The bell opens notification setup on demand. This supersedes inline creation,
 view-before-edit and per-row trash guidance above. Durable local saves, recovery,
 revision conflicts, private ownership and unsynced-only indicators remain in force.
+
+Notes sheet refinement (4 November 2026): the user's follow-up changes sheet height
+to 90% of the screen, capped by the visible viewport when a keyboard opens.
+Member search uses the shared AnchoredResults surface. It chooses above or below
+from the usable space between the sheet header/footer and the visual viewport,
+repositions during scrolling/resizing, and scrolls long result lists internally.
+The popup is portalled inside the native dialog so it remains in the modal's
+focus/inert boundary and escapes the body's clipping. The runtime `--z-popover`
+token owns its layer. Keep the existing control border, radius and flat surface.

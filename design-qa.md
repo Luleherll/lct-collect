@@ -120,3 +120,42 @@ Final verification: 48 unit/worker tests; 16 Firebase notes/sync API tests; all
 browser scenarios after the final UI and reminder fix. Astro checking, application
 and Functions builds, formatting and the strict UI contract audit pass. The only
 Astro hints are the existing Firebase Messaging deprecations.
+
+## Notes sheet and member-result follow-up — 4 November 2026
+
+The user's latest instruction supersedes the earlier two-thirds-height image:
+make the sheet 90% tall and place member results in whichever direction has usable
+space, including above the field when the keyboard covers the bottom.
+
+Browser-rendered evidence at 390×844, deviceScaleFactor 1:
+[90% sheet](docs/design/notes/new-note.png),
+[weekly settings](docs/design/notes/weekly-reminder.png),
+[results below](docs/design/notes/member-results-below.png), and
+[results above](docs/design/notes/member-results-above.png).
+The above-results capture models a 450px visual viewport within the 844px layout
+viewport; the remaining dimmed area is the simulated keyboard area, not a physical
+keyboard capture. Both directions and the resized sheet were opened and visually
+inspected. Brand assets, typography, colors and field spacing retain the approved
+system. The explicitly requested sheet height is the intentional image deviation.
+
+AnchoredResults measures the visible viewport and dialog header/footer boundaries,
+uses the larger available side, and constrains its own scroll height. It renders
+inside the native dialog, outside its scrolling body, to avoid clipping and retain
+modal focus containment. Scroll/resize observers update placement without fetching
+or delaying local search. SearchField exposes the results relationship. Arrow
+keys reach matches; Enter selects without submitting the note; Escape dismisses
+results before the sheet and restores search focus. Outside focus/pointer and
+clearing/selecting dismiss results. Search pagination cannot submit the form.
+
+The original 39 browser scenarios pass with the new code. The new placement case
+passes separately after correcting its test locator to distinguish the populated
+search box from its Clear button. It checks the 90% height, both directions,
+header/footer bounds, visual-viewport keyboard resizing, short 320px layout,
+keyboard selection/dismissal, no-match state, outside dismissal, member paging
+without submission, and axe accessibility. All 48 unit/worker tests, Astro
+checking, the application build and strict UI audit pass. Physical mobile keyboard
+and assistive-technology acceptance remain as previously recorded.
+
+No actionable P0/P1/P2 findings remain for this follow-up.
+
+final result: passed

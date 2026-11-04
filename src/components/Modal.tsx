@@ -40,7 +40,11 @@ export default function Modal({
         d.querySelectorAll<HTMLElement>(
           'a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
         ),
-      ).filter((element) => element.getClientRects().length > 0);
+      ).filter(
+        (element) =>
+          element.getClientRects().length > 0 &&
+          getComputedStyle(element).visibility !== 'hidden',
+      );
       const first = controls[0],
         last = controls.at(-1);
       if (!first || !last) return;
@@ -71,7 +75,7 @@ export default function Modal({
     const viewport = window.visualViewport;
     const resize = () => {
       const available = viewport?.height ?? window.innerHeight;
-      const height = Math.min(window.innerHeight * 0.67, available - 12);
+      const height = Math.min(window.innerHeight * 0.9, available - 12);
       ref.current?.style.setProperty('--sheet-height', `${height}px`);
       ref.current?.style.setProperty(
         '--sheet-top',

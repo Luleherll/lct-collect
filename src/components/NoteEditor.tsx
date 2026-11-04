@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import SearchField from './SearchField';
 import Pagination from './Pagination';
 import Icon from './Icon';
+import AnchoredResults from './AnchoredResults';
 import { groupAccounts } from '../lib/account';
 import { usePagination } from '../hooks/usePagination';
 import type { Member, MemberTag } from '../lib/models';
@@ -37,6 +38,16 @@ export default function NoteEditor({
   const [tagging, setTagging] = useState(false),
     [scheduling, setScheduling] = useState(false),
     [query, setQuery] = useState('');
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const memberSearch = useRef<HTMLDivElement>(null);
+  const resultsId = `${id}-member-results`;
+  function dismissResults(restore = false) {
+    if (restore)
+      memberSearch.current
+        ?.querySelector('input')
+        ?.focus({ preventScroll: true });
+    setResultsOpen(false);
+  }
   const text = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
     if (text.current) {
@@ -124,52 +135,132 @@ export default function NoteEditor({
                 ))}
               </div>
             )}
-            <SearchField
-              label="Tag members by name or number"
-              value={query}
-              onChange={setQuery}
-            />
-            {pages.items.map((g) => (
-              <button
-                type="button"
-                className="tag-result"
-                key={g.key}
-                disabled={
-                  busy ||
-                  tags.length >= 10 ||
-                  tags.some((t) => t.uniqueNumber === g.uniqueNumber) ||
-                  !g.uniqueNumber
+            <div
+              ref={memberSearch}
+              className="note-member-search"
+              onFocusCapture={(event) => {
+                if (event.target instanceof HTMLInputElement && query.trim())
+                  setResultsOpen(true);
+              }}
+              onBlurCapture={(event) => {
+                const next = event.relatedTarget as Node | null;
+                if (
+                  !event.currentTarget.contains(next) &&
+                  !document.getElementById(resultsId)?.contains(next)
+                )
+                  dismissResults();
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Enter' &&
+                  event.target instanceof HTMLInputElement
+                ) {
+                  event.preventDefault();
+                  if (resultsOpen)
+                    document
+                      .getElementById(resultsId)
+                      ?.querySelector<HTMLButtonElement>(
+                        '.tag-result:not(:disabled)',
+                      )
+                      ?.click();
+                  return;
                 }
-                onClick={() => {
-                  onTags([
-                    ...tags,
-                    {
-                      memberId: g.accounts[0].memberId,
-                      uniqueNumber: g.uniqueNumber!,
-                      fullName: g.fullName,
-                    },
-                  ]);
-                  setQuery('');
+                if (!resultsOpen || !query.trim()) return;
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  dismissResults(true);
+                } else if (
+                  event.key === 'ArrowDown' ||
+                  event.key === 'ArrowUp'
+                ) {
+                  const items = Array.from(
+                    document
+                      .getElementById(resultsId)
+                      ?.querySelectorAll<HTMLButtonElement>(
+                        '.tag-result:not(:disabled)',
+                      ) ?? [],
+                  );
+                  if (!items.length) return;
+                  const index = items.indexOf(
+                    event.target as HTMLButtonElement,
+                  );
+                  event.preventDefault();
+                  items[
+                    index < 0
+                      ? event.key === 'ArrowDown'
+                        ? 0
+                        : items.length - 1
+                      : (index +
+                          (event.key === 'ArrowDown' ? 1 : items.length - 1)) %
+                        items.length
+                  ]?.focus();
+                }
+              }}
+            >
+              <SearchField
+                controls={resultsOpen && query.trim() ? resultsId : undefined}
+                label="Tag members by name or number"
+                value={query}
+                disabled={busy}
+                onChange={(value) => {
+                  setQuery(value);
+                  setResultsOpen(!!value.trim());
                 }}
-              >
-                {g.fullName}
-                <small>{g.uniqueNumber}</small>
-              </button>
-            ))}
-            {query.trim() && !pages.items.length && (
-              <p className="muted">
-                No members found on this device. Try another name or number.
-              </p>
-            )}
-            {pages.pageCount > 1 && (
-              <Pagination
-                label="Tag member pages"
-                page={pages.page}
-                pageCount={pages.pageCount}
-                onPrevious={pages.previous}
-                onNext={pages.next}
               />
-            )}
+              {resultsOpen && !!query.trim() && (
+                <AnchoredResults
+                  anchor={memberSearch}
+                  id={resultsId}
+                  label="Matching members"
+                  onClose={() => dismissResults()}
+                >
+                  {pages.items.map((g) => (
+                    <button
+                      type="button"
+                      className="tag-result"
+                      key={g.key}
+                      disabled={
+                        busy ||
+                        tags.length >= 10 ||
+                        tags.some((t) => t.uniqueNumber === g.uniqueNumber) ||
+                        !g.uniqueNumber
+                      }
+                      onClick={() => {
+                        onTags([
+                          ...tags,
+                          {
+                            memberId: g.accounts[0].memberId,
+                            uniqueNumber: g.uniqueNumber!,
+                            fullName: g.fullName,
+                          },
+                        ]);
+                        setQuery('');
+                        dismissResults(true);
+                      }}
+                    >
+                      {g.fullName}
+                      <small>{g.uniqueNumber}</small>
+                    </button>
+                  ))}
+                  {query.trim() && !pages.items.length && (
+                    <p className="muted">
+                      No members found on this device. Try another name or
+                      number.
+                    </p>
+                  )}
+                  {pages.pageCount > 1 && (
+                    <Pagination
+                      label="Tag member pages"
+                      page={pages.page}
+                      pageCount={pages.pageCount}
+                      onPrevious={pages.previous}
+                      onNext={pages.next}
+                    />
+                  )}
+                </AnchoredResults>
+              )}
+            </div>
             <small className="muted">
               Up to 10 members or groups. Notes stay private to you.
             </small>

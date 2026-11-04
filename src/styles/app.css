@@ -14,6 +14,7 @@
   --radius-panel: 12px;
   --radius-control: 7px;
   --radius-dialog: 16px;
+  --z-popover: 300;
   --scroll-thumb: #8b9aa7;
   --scroll-track: #f1f4f5;
   --scroll-hover: #627787;
@@ -3170,7 +3171,7 @@ dialog.bottom-sheet {
   margin: 0 auto;
   width: 100%;
   max-width: 620px;
-  height: var(--sheet-height, 67dvh);
+  height: var(--sheet-height, 90dvh);
   max-height: none;
   border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
   border: 1px solid var(--line);
@@ -3427,4 +3428,33 @@ dialog.bottom-sheet {
   .sheet-footer {
     padding-inline: 16px;
   }
+}
+
+.anchored-results {
+  position: fixed;
+  z-index: var(--z-popover);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--navy);
+}
+.anchored-results .tag-result {
+  align-items: center;
+  gap: 12px;
+}
+.anchored-results .tag-result small {
+  flex: none;
+}
+.anchored-results .pagination {
+  margin: 8px 0 0;
+  gap: 6px;
+}
+.anchored-results .pagination > span {
+  font-size: 12px;
+}
+.anchored-results .muted {
+  padding-inline: 8px;
 }
