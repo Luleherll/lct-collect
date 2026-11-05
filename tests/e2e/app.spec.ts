@@ -5,6 +5,18 @@ import { bounds, workday } from '../../src/lib/domain';
 const evidence = process.env.LCT_UI_EVIDENCE_DIR ?? 'test-results/visual';
 async function login(page: Page, role = 'agent') {
   await page.goto('/login/');
+  const destination = role === 'agent' ? '**/agent/' : `**/${role}/`;
+  await Promise.race([
+    page.getByPlaceholder('Your username').waitFor({ state: 'visible' }),
+    page.waitForURL(destination),
+  ]);
+  if (!(await page.getByPlaceholder('Your username').isVisible())) {
+    await expect(page.locator('#main-content')).toHaveAttribute(
+      'aria-busy',
+      'false',
+    );
+    return;
+  }
   await page.getByPlaceholder('Your username').fill(`demo.${role}`);
   await page.getByPlaceholder('Your password').fill('CollectDemo123!');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
@@ -133,28 +145,14 @@ test('viewer records and undoes through the real audited operations', async ({
   await page
     .getByRole('combobox', { name: 'Status', exact: true })
     .selectOption('all');
-  await page.route(/documents:commit|Firestore\/Commit/, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    await route.continue();
-  });
   const row = page
     .locator('.entry-row')
     .filter({ hasText: 'Loan instalment' })
     .first();
-  const idleWidth = await row
-    .getByRole('button', { name: 'Mark recorded' })
-    .evaluate((el) => el.getBoundingClientRect().width);
   await row.getByRole('button', { name: 'Mark recorded' }).click();
-  await expect(row.getByRole('button', { name: 'Recording…' })).toHaveAttribute(
-    'aria-busy',
-    'true',
-  );
-  await expect(row.getByRole('button', { name: 'Recording…' })).toBeDisabled();
-  expect(
-    await row
-      .getByRole('button', { name: 'Recording…' })
-      .evaluate((el) => el.getBoundingClientRect().width),
-  ).toBe(idleWidth);
+  await expect(
+    row.getByRole('button', { name: 'Undo', exact: true }),
+  ).toBeEnabled();
   await expect(
     page.getByRole('button', { name: 'Undo recording check', exact: true }),
   ).toBeVisible();
@@ -224,32 +222,28 @@ test('owner imports separate accounts under member/group numbers and preserves i
   ).toHaveCount(0);
 });
 
-test('blocked Web Storage permits memory-only sign-in and safely blocks financial submission', async ({
+test('blocked Web Storage keeps reads usable and accepts durable IndexedDB writes', async ({
   page,
 }) => {
   await page.addInitScript(() => {
     for (const name of ['localStorage', 'sessionStorage'])
       Object.defineProperty(window, name, {
         get() {
-          throw new DOMException('Blocked', 'SecurityError');
+          throw new Error('blocked');
         },
       });
   });
   await login(page);
   await select(page);
-  await page.locator('#deposit').fill('10,000');
+  await page.locator('#deposit').fill('12');
   await page.getByRole('button', { name: 'Review entry', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm & save' }).click();
-  await page.getByRole('button', { name: 'Back / edit' }).click();
-  await expect(page.getByRole('alert')).toContainText(
-    'cannot retain a save reference',
-  );
   await expect(
-    page.getByRole('button', { name: 'Review entry', exact: true }),
-  ).toBeEnabled();
+    page.getByRole('status', { name: 'Saved entry receipt' }),
+  ).toContainText('Saved on this device');
 });
 
-test('offline and operational rollover stop writes without replaying the draft', async ({
+test('offline entry remains editable and rollover prevents posting into the wrong session', async ({
   page,
   context,
 }) => {
@@ -259,7 +253,7 @@ test('offline and operational rollover stop writes without replaying the draft',
   await context.setOffline(true);
   await expect(
     page.getByRole('button', { name: 'Review entry', exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await expect(
     page.getByRole('status').filter({ hasText: /offline/i }),
   ).toBeVisible();
@@ -497,16 +491,14 @@ test('automatic record cache survives reload while the database is unavailable',
   await expect(page.locator('.entry-row').first()).toBeVisible();
   await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
   await page.reload();
-  await expect(page.locator('.loading-overlay')).toBeVisible();
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
   await expect(page.locator('.connection')).toHaveCount(0);
   await expect(page.locator('.loading-overlay')).toBeHidden({ timeout: 12000 });
   await expect(
     page.getByRole('heading', { name: 'Recent entries', exact: true }),
   ).toBeVisible();
   await expect(page.locator('.entry-row').first()).toBeVisible();
-  await expect(
-    page.getByRole('status').filter({ hasText: 'data may be outdated' }),
-  ).toBeVisible();
+  await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
 });
 
 test('multi-account members select in one tap and save mixed account types with a note', async ({
@@ -1109,7 +1101,7 @@ for (const width of [320, 1280]) {
   }
 }
 
-test('owner initial connection uses overlay then a compact offline fallback', async ({
+test('owner opens cached directory directly without transitional overlay', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 740 });
@@ -1133,14 +1125,12 @@ test('owner initial connection uses overlay then a compact offline fallback', as
   await page.screenshot({ path: join(evidence, 'branded-admin-mobile.png') });
   await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
   await page.reload();
-  await expect(page.locator('.loading-overlay')).toBeVisible();
-  await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
   await page.screenshot({ path: join(evidence, 'admin-loading-mobile.png') });
   await expect(page.locator('.connection')).toHaveCount(0);
   await expect(page.locator('.loading-overlay')).toBeHidden({ timeout: 12000 });
-  await expect(page.locator('.connection.compact-connection')).toContainText(
-    'data may be outdated',
-  );
+  await expect(page.locator('.loading-overlay')).toHaveCount(0);
   await expect(page.getByLabel('Choose CSV', { exact: true })).toBeDisabled();
   await page.screenshot({ path: join(evidence, 'admin-offline-mobile.png') });
   await expect(
@@ -1149,48 +1139,77 @@ test('owner initial connection uses overlay then a compact offline fallback', as
   await noOverflow(page);
 });
 
-test('private notes add inline, protect drafts, open in a popup and remain cached offline', async ({
+test('private notes use a guarded bottom sheet and save offline without leaving the agenda', async ({
   page,
   context,
 }) => {
   await page.setViewportSize({ width: 320, height: 740 });
   await login(page);
   await page.getByRole('link', { name: 'Notes', exact: true }).click();
-  await expect(page.locator('.loading-overlay')).toHaveCount(0);
-  await page
-    .getByLabel('New note', { exact: true })
-    .fill('Remember the receipt book');
-  await menu(page, 'History');
-  await expect(page.getByRole('dialog')).toContainText('not been saved');
-  await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
-  await page.getByRole('button', { name: 'Add note', exact: true }).click();
   await expect(
-    page.getByRole('status', { name: 'Activity update' }),
-  ).toContainText('Note added');
-  await expect(page.getByLabel('New note', { exact: true })).toHaveValue('');
-  await page
-    .getByRole('button', { name: /Remember the receipt book/ })
-    .first()
+    page.getByRole('button', { name: 'Upcoming', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    page.getByRole('textbox', { name: 'New note', exact: true }),
+  ).toHaveCount(0);
+  const create = page.getByRole('button', { name: 'New note', exact: true });
+  await create.click();
+  let sheet = page.getByRole('dialog', { name: 'New note', exact: true });
+  await expect(sheet.getByRole('heading', { name: 'New note' })).toBeFocused();
+  await sheet
+    .getByRole('textbox', { name: 'New note', exact: true })
+    .fill('Remember the receipt book');
+  await page.keyboard.press('Escape');
+  const guard = page.getByRole('dialog', {
+    name: 'Discard this note?',
+    exact: true,
+  });
+  await expect(guard).toContainText('not been saved');
+  await guard
+    .getByRole('button', { name: 'Keep writing', exact: true })
     .click();
-  await expect(page.getByRole('dialog')).toContainText(
+  await expect(
+    sheet.getByRole('textbox', { name: 'New note', exact: true }),
+  ).toHaveValue('Remember the receipt book');
+  await sheet.getByRole('button', { name: 'Save note', exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(create).toBeFocused();
+  await page.getByRole('button', { name: 'All notes', exact: true }).click();
+  const row = page
+    .locator('.note-list-row')
+    .filter({ hasText: 'Remember the receipt book' })
+    .first();
+  await row.getByRole('button').click();
+  sheet = page.getByRole('dialog', { name: 'Edit note', exact: true });
+  await expect(sheet.getByLabel('Note text', { exact: true })).toHaveValue(
     'Remember the receipt book',
   );
   await page.keyboard.press('Escape');
+  await expect(row.getByRole('button')).toBeFocused();
   await noOverflow(page);
   const audit = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
     .analyze();
   expect(audit.violations).toEqual([]);
   await page.screenshot({ path: join(evidence, 'notes-mobile.png') });
-  await page.route('http://127.0.0.1:8080/**', (route) => route.abort());
-  await page.reload();
-  await expect(page.locator('.loading-overlay')).toBeHidden({ timeout: 12000 });
-  await expect(page.locator('.note-row').first()).toBeVisible();
   await context.setOffline(true);
+  await create.click();
+  sheet = page.getByRole('dialog', { name: 'New note', exact: true });
+  await sheet
+    .getByRole('textbox', { name: 'New note', exact: true })
+    .fill('Offline visit reminder');
+  await sheet.getByRole('button', { name: 'Save note', exact: true }).click();
+  await expect(sheet).toHaveCount(0);
   await expect(
-    page.getByRole('button', { name: 'Add note', exact: true }),
-  ).toBeDisabled();
+    page
+      .locator('.note-list-row')
+      .filter({ hasText: 'Offline visit reminder' }),
+  ).toContainText('Pending sync');
   await expect(page.locator('.compact-connection')).toContainText('offline');
+  await context.setOffline(false);
+  await expect(page.getByLabel('Unsynced work')).toHaveCount(0, {
+    timeout: 30000,
+  });
 });
 
 test('notes paginate exactly fifty at a time without an empty final page', async ({
@@ -1223,6 +1242,7 @@ test('notes paginate exactly fifty at a time without an empty final page', async
   await login(page);
   await page.getByRole('link', { name: 'Notes', exact: true }).click();
   await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await page.getByRole('button', { name: 'All notes', exact: true }).click();
   await expect(page.locator('.note-row')).toHaveCount(50);
   const pages = page.getByRole('navigation', { name: 'Note pages' });
   await pages.getByRole('button', { name: 'Next', exact: true }).click();
@@ -1327,20 +1347,21 @@ test('notes support member tags, schedules, editing and reversible completion', 
   await login(page);
   await page.getByRole('link', { name: 'Notes', exact: true }).click();
   await expect(page.locator('.loading-overlay')).toHaveCount(0);
+  await page.getByRole('button', { name: 'New note', exact: true }).click();
   await page
-    .getByLabel('New note', { exact: true })
+    .getByRole('textbox', { name: 'New note', exact: true })
     .fill('Tagged reminder for collection');
-  await page.getByRole('button', { name: 'Tag members', exact: true }).click();
+  await page.getByRole('button', { name: 'Members', exact: true }).click();
   await page.getByLabel('Tag members by name or number').fill('LCT006');
   await page.locator('.tag-result').first().click();
-  await expect(page.locator('.note-composer .note-tags')).toContainText(
+  await expect(page.locator('.note-sheet-form .note-tags')).toContainText(
     'LCT006',
   );
   await page.getByRole('button', { name: 'Reminder', exact: true }).click();
-  await page.getByLabel('Repeat', { exact: true }).selectOption('weekly');
+  await page.getByRole('button', { name: 'Weekly', exact: true }).click();
   await page.getByLabel('Weekday', { exact: true }).selectOption('2');
   await page.getByLabel('Time (EAT)', { exact: true }).fill('10:15');
-  await page.getByRole('button', { name: 'Add note', exact: true }).click();
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
   await expect(
     page.getByRole('status', { name: 'Activity update' }),
   ).toContainText('Note added');
@@ -1348,15 +1369,14 @@ test('notes support member tags, schedules, editing and reversible completion', 
     .getByRole('button', { name: /Tagged reminder for collection/ })
     .first()
     .click();
-  let dialog = page.getByRole('dialog', { name: 'Note', exact: true });
+  let dialog = page.getByRole('dialog', { name: 'Edit note', exact: true });
   await expect(dialog).toContainText('Every Tuesday');
   await expect(dialog).toContainText('LCT006');
-  await dialog.getByRole('button', { name: 'Edit note', exact: true }).click();
-  dialog = page.getByRole('dialog', { name: 'Edit note', exact: true });
+  await dialog.getByRole('button', { name: 'Reminder', exact: true }).click();
   await dialog
     .getByLabel('Note text', { exact: true })
     .fill('Edited tagged reminder');
-  await dialog.getByLabel('Repeat', { exact: true }).selectOption('once');
+  await dialog.getByRole('button', { name: 'Once', exact: true }).click();
   await dialog
     .getByLabel('Date and time (EAT)', { exact: true })
     .fill('2020-01-01T09:00');
@@ -1374,8 +1394,17 @@ test('notes support member tags, schedules, editing and reversible completion', 
   await dialog
     .getByRole('button', { name: 'Save changes', exact: true })
     .click();
-  dialog = page.getByRole('dialog', { name: 'Note', exact: true });
-  await expect(dialog).toContainText('Edited tagged reminder');
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole('button', { name: 'All notes', exact: true }).click();
+  await page
+    .locator('.note-row')
+    .filter({ hasText: 'Edited tagged reminder' })
+    .click();
+  dialog = page.getByRole('dialog', { name: 'Edit note', exact: true });
+  await expect(dialog.getByLabel('Note text', { exact: true })).toHaveValue(
+    'Edited tagged reminder',
+  );
+  await dialog.getByLabel('Note actions', { exact: true }).click();
   await dialog.getByRole('button', { name: 'Mark done', exact: true }).click();
   await expect(
     dialog.getByRole('button', { name: 'Reopen', exact: true }),
@@ -1384,7 +1413,13 @@ test('notes support member tags, schedules, editing and reversible completion', 
   await expect(
     dialog.getByRole('button', { name: 'Mark done', exact: true }),
   ).toBeVisible();
-  await page.keyboard.press('Escape');
+  await dialog
+    .getByRole('button', { name: 'Save changes', exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByLabel('Unsynced work')).toHaveCount(0, {
+    timeout: 30000,
+  });
   await noOverflow(page);
   const noteId = await page
     .locator('.note-list-row')
@@ -1400,8 +1435,10 @@ test('notes support member tags, schedules, editing and reversible completion', 
   await signedOut.getByPlaceholder('Your password').fill('CollectDemo123!');
   await signedOut.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(
-    signedOut.getByRole('dialog', { name: 'Note', exact: true }),
-  ).toContainText('Edited tagged reminder');
+    signedOut
+      .getByRole('dialog', { name: 'Edit note', exact: true })
+      .getByLabel('Note text', { exact: true }),
+  ).toHaveValue('Edited tagged reminder');
   await extra.close();
   await page.screenshot({
     path: join(evidence, 'reminder-notes-mobile.png'),
@@ -1441,6 +1478,7 @@ test('soft deletion confirms, retains the note privately and returns from an emp
     await batch.commit();
     await login(page);
     await page.getByRole('link', { name: 'Notes', exact: true }).click();
+    await page.getByRole('button', { name: 'All notes', exact: true }).click();
     const pages = page.getByRole('navigation', { name: 'Note pages' });
     await expect(page.locator('.note-row')).toHaveCount(50);
     await pages.getByRole('button', { name: 'Next', exact: true }).click();
@@ -1449,17 +1487,20 @@ test('soft deletion confirms, retains the note privately and returns from an emp
       .locator('.note-row')
       .filter({ hasText: 'Retained note 0' })
       .click();
-    const noteDialog = page.getByRole('dialog', { name: 'Note', exact: true });
+    const noteDialog = page.getByRole('dialog', {
+      name: 'Edit note',
+      exact: true,
+    });
     await expect(noteDialog).toBeVisible();
     await expect(
-      page
-        .getByRole('dialog', { name: 'Note', exact: true })
-        .getByRole('button', { name: 'Delete note', exact: true }),
+      page.getByRole('button', {
+        name: 'Delete note: Retained note 0',
+        exact: true,
+      }),
     ).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(noteDialog).toHaveCount(0);
-    const trash = page.getByRole('button', {
-      name: 'Delete note: Retained note 0',
+    await noteDialog.getByLabel('Note actions', { exact: true }).click();
+    const trash = noteDialog.getByRole('button', {
+      name: 'Delete note',
       exact: true,
     });
     await trash.click();
@@ -1471,7 +1512,7 @@ test('soft deletion confirms, retains the note privately and returns from an emp
       dialog.getByRole('button', { name: 'Keep note' }),
     ).toBeFocused();
     await dialog.getByRole('button', { name: 'Keep note' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(noteDialog).toBeVisible();
     await expect(trash).toBeFocused();
     await trash.click();
     dialog = page.getByRole('dialog', { name: 'Delete note?', exact: true });
@@ -1487,17 +1528,19 @@ test('soft deletion confirms, retains the note privately and returns from an emp
       page.getByRole('status', { name: 'Activity update' }),
     ).toContainText('Note deleted.');
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    await expect(pages).toContainText('Page 1');
+    await expect(pages).toHaveCount(0);
     await expect(page.locator('.note-row')).toHaveCount(50);
-    await expect(
-      pages.getByRole('button', { name: 'Next', exact: true }),
-    ).toBeDisabled();
+
+    await expect(page.getByLabel('Unsynced work')).toHaveCount(0, {
+      timeout: 30000,
+    });
     const archived = await database
       .doc('users/demo-agent/deletedNotes/delete_fixture_000')
       .get();
     expect(archived.data()?.body).toBe('Retained note 0');
     expect(archived.data()?.deletedAt).toBeTruthy();
     await page.reload();
+    await page.getByRole('button', { name: 'All notes', exact: true }).click();
     await expect(page.locator('.note-row')).toHaveCount(50);
     await expect(
       page.locator('[data-note-id="delete_fixture_000"]'),
@@ -1511,7 +1554,7 @@ test('soft deletion confirms, retains the note privately and returns from an emp
   }
 });
 
-test('viewer uses the shared loading overlay before a compact offline notice', async ({
+test('viewer keeps cached register interactive during refresh and offline', async ({
   page,
   context,
 }) => {
@@ -1526,9 +1569,12 @@ test('viewer uses the shared loading overlay before a compact offline notice', a
   });
   try {
     await page.reload();
-    await expect(page.locator('.loading-overlay')).toBeVisible();
+    await expect(page.locator('.loading-overlay')).toHaveCount(0);
     await expect(page.locator('.connection')).toHaveCount(0);
-    await expect(page.locator('#main-content')).toHaveAttribute('inert', '');
+    await expect(page.locator('#main-content')).not.toHaveAttribute(
+      'inert',
+      '',
+    );
     release();
     await expect(page.locator('.loading-overlay')).toHaveCount(0);
     await expect(page.locator('.connection')).toHaveCount(0);

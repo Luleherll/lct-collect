@@ -1,3 +1,4 @@
+import SyncState from './SyncState';
 import type { Row } from '../lib/models';
 export const Account = ({
   name,
@@ -43,5 +44,10 @@ export const Status = ({ row }: { row: Row }) => (
       : row.line.recorded
         ? 'Recorded'
         : 'Unrecorded'}
+    <SyncState entryId={row.entry.entryId} type={row.type} />
+    {row.entry.lateSubmission && (
+      <span> · Late submission · office review</span>
+    )}
+    {row.entry.clockFlag && <span> · Check device time</span>}
   </span>
 );

@@ -12,6 +12,15 @@ import {
   type Reminder,
 } from './schedule.js';
 initializeApp();
+import {
+  financial,
+  recordRejection,
+  receiptMetadata,
+  signature as commandSignature,
+  validateCommand,
+  wire,
+} from './sync.js';
+import type { Command, Outcome } from './protocol.js';
 const db = getFirestore(),
   signingKey = defineSecret('REMINDER_SIGNING_KEY');
 const runtimeAccount = defineString('REMINDER_SERVICE_ACCOUNT', {
@@ -43,13 +52,42 @@ async function agent(uid?: string) {
 }
 export const manageNote = onCall(options, async (request) => {
   const uid = await agent(request.auth?.uid);
-  if (
-    !request.data ||
-    typeof request.data !== 'object' ||
-    Array.isArray(request.data)
-  )
+  return manageNoteData(uid, request.data);
+});
+async function manageNoteData(uid: string, data: unknown, command?: Command) {
+  if (!data || typeof data !== 'object' || Array.isArray(data))
     bad('Check the note details.');
-  const input = request.data as Record<string, unknown>;
+  let input = data as Record<string, unknown>;
+  const receipt = command
+    ? db.doc(`users/${uid}/mutations/${command.id}`)
+    : null;
+  const commandHash = command ? commandSignature(command) : '';
+  if (receipt) {
+    const old = await receipt.get();
+    if (old.exists) {
+      if (old.data()!.hash !== commandHash) bad('Submission reference reused.');
+      return old.data()!.outcome;
+    }
+    if (command!.dependsOn) {
+      const dep = await db
+        .doc(`users/${uid}/mutations/${command!.dependsOn}`)
+        .get();
+      if (
+        !dep.exists ||
+        dep.data()!.scope !== command!.scope ||
+        dep.data()!.outcome.status === 'rejected'
+      )
+        throw new HttpsError(
+          'failed-precondition',
+          'A preceding note change needs attention.',
+        );
+      input = {
+        ...input,
+        expectedRevision: dep.data()!.outcome.revision,
+        occurrenceAt: dep.data()!.outcome.occurrenceAt ?? null,
+      };
+    }
+  }
   const noteId = id(input.noteId),
     mutationId = id(input.mutationId),
     ref = db.doc(`users/${uid}/notes/${noteId}`),
@@ -110,7 +148,20 @@ export const manageNote = onCall(options, async (request) => {
     }
   } else if (input.action === 'done' && typeof input.done !== 'boolean')
     bad('Choose a completion state.');
+  let outcome: Outcome | undefined;
   await db.runTransaction(async (tx) => {
+    const actor = (await tx.get(db.doc(`users/${uid}`))).data();
+    if (!actor?.active || actor.role !== 'agent')
+      throw new HttpsError('permission-denied', 'Agent access required.');
+    if (receipt) {
+      const prior = await tx.get(receipt);
+      if (prior.exists) {
+        if (prior.data()!.hash !== commandHash)
+          bad('Submission reference reused.');
+        outcome = prior.data()!.outcome;
+        return;
+      }
+    }
     const [snap, archived] = await Promise.all([tx.get(ref), tx.get(archive)]),
       old = snap.data();
     if (archived.exists) {
@@ -133,6 +184,22 @@ export const manageNote = onCall(options, async (request) => {
         'This note changed. Reopen it before saving.',
       );
     const now = Date.now();
+    const storeReceipt = (record: unknown) => {
+      if (receipt) {
+        outcome = {
+          records: { [ref.path]: wire(record) },
+          revision: (old?.revision ?? 0) + 1,
+          occurrenceAt: (record as any)?.occurrenceAt ?? null,
+        };
+        tx.create(receipt, {
+          hash: commandHash,
+          scope: command!.scope,
+          outcome,
+          receivedAt: nowStamp(),
+          ...receiptMetadata(command!),
+        });
+      }
+    };
     if (input.action === 'delete') {
       if (!old) throw new HttpsError('not-found', 'This note is unavailable.');
       // Retain the complete private record while removing it from active queries,
@@ -149,17 +216,38 @@ export const manageNote = onCall(options, async (request) => {
         lastMutationHash: signature,
       });
       tx.delete(ref);
+      storeReceipt(null);
       return;
     }
     let patch: Record<string, unknown>;
     if (input.action === 'save') {
-      const changed =
-        JSON.stringify(parseReminder(old?.reminder ?? { kind: 'none' })) !==
-        JSON.stringify(schedule);
+      // Older deep-merged writes retained fields from the previous reminder kind.
+      // Normalize stored data only; incoming schedules still use strict validation.
+      const prior = old?.reminder;
+      const previous =
+        prior?.kind === 'once'
+          ? { kind: 'once', at: prior.at }
+          : prior?.kind === 'weekly'
+            ? { kind: 'weekly', day: prior.day, minute: prior.minute }
+            : (prior ?? { kind: 'none' });
+      let changed = true;
+      try {
+        changed =
+          JSON.stringify(
+            parseReminder(
+              previous.kind === 'none' ? { kind: 'none' } : previous,
+            ),
+          ) !== JSON.stringify(schedule);
+      } catch {
+        // A validated replacement repairs malformed legacy schedules.
+      }
       let first: number | null = null;
       if (changed || !old) {
         try {
-          first = firstOccurrence(schedule, now);
+          first =
+            command && schedule.kind === 'once' && schedule.at <= now
+              ? null
+              : firstOccurrence(schedule, now);
         } catch (e) {
           bad((e as Error).message);
         }
@@ -205,13 +293,44 @@ export const manageNote = onCall(options, async (request) => {
             ? Timestamp.fromMillis(r.at)
             : null;
     }
-    tx.set(
-      ref,
-      { ...patch, lastMutationId: mutationId, lastMutationHash: signature },
-      { merge: true },
-    );
+    storeReceipt({ ...old, ...patch });
+    tx.set(ref, {
+      ...old,
+      ...patch,
+      lastMutationId: mutationId,
+      lastMutationHash: signature,
+    });
   });
-  return { noteId };
+  return outcome ?? { noteId };
+}
+export const syncOperation = onCall(options, async (request) => {
+  if (!request.auth?.uid)
+    throw new HttpsError('unauthenticated', 'Sign in first.');
+  const c = request.data as Command;
+  validateCommand(c);
+  if (c.actorId !== undefined && c.actorId !== request.auth.uid)
+    throw new HttpsError(
+      'permission-denied',
+      'This operation belongs to another signed-in account.',
+    );
+  try {
+    if (c.kind === 'note') {
+      const uid = await agent(request.auth.uid);
+      if (c.scope !== `note:${c.data.noteId}` || c.data.mutationId !== c.id)
+        bad('Invalid note operation.');
+      return await manageNoteData(uid, c.data, c);
+    }
+    return await financial(request.auth.uid, c);
+  } catch (error) {
+    if (
+      error instanceof HttpsError &&
+      ['failed-precondition', 'invalid-argument', 'not-found'].includes(
+        error.code,
+      )
+    )
+      return recordRejection(request.auth.uid, c, error);
+    throw error;
+  }
 });
 export const registerReminderDevice = onCall(options, async (request) => {
   const uid = await agent(request.auth?.uid),

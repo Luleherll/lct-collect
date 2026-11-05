@@ -929,3 +929,46 @@ it('accepts a multi-account loan without a savings/fixed choice and keeps its au
   );
   await assertSucceeds(voidLine(agent(), 'loanInstalment'));
 });
+
+describe('local-first protocol cutover', () => {
+  it('blocks receipt access and prevents clients changing the cutover', async () => {
+    for (const client of [
+      agent(),
+      viewer(),
+      env.authenticatedContext('admin-a').firestore() as unknown as Firestore,
+    ]) {
+      await assertFails(
+        setDoc(doc(client, 'config', 'syncProtocol'), { minimumVersion: 1 }),
+      );
+      await assertFails(
+        setDoc(doc(client, 'users', 'agent-a', 'mutations', 'receipt-test'), {
+          hash: 'fake',
+        }),
+      );
+      await assertFails(
+        getDoc(doc(client, 'users', 'agent-a', 'mutations', 'receipt-test')),
+      );
+    }
+  });
+  it('disables legacy financial mutations after the reviewed cutover while preserving reads', async () => {
+    await env.withSecurityRulesDisabled(async (context) => {
+      await setDoc(
+        doc(
+          context.firestore() as unknown as Firestore,
+          'config',
+          'syncProtocol',
+        ),
+        { minimumVersion: 1 },
+      );
+    });
+    await assertSucceeds(getDoc(doc(agent(), 'sessions', sessionId)));
+    await assertFails(create(agent()));
+    await assertFails(
+      setDoc(doc(agent(), 'users', 'agent-a', 'notes', 'legacy-note'), {
+        noteId: 'legacy-note',
+        body: 'legacy',
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+});

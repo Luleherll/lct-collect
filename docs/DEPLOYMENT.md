@@ -119,7 +119,7 @@ npx -y firebase-tools@15.34.1 deploy --only hosting --project lct-collect-stagin
 
 Direct-load/refresh `/login/`, `/agent/`, `/agent/recent/`, `/agent/history/`, `/viewer/`, `/admin/`. These are emitted Astro routes, not an SPA catch-all. Static HTTP checks do not replace browser interaction or the Android/paper-parallel pilot.
 
-Analytics and Storage are not initialized. Cloud Functions are used only for private note/reminder operations; financial entries still use authenticated online Firestore transactions. Keep staging and production data separate and apply directory exports only through the owner’s reviewed import flow.
+Analytics and Storage are not initialized. Cloud Functions handle queued daily operations transactionally as well as private notes/reminders. Deploy compatible Functions and rules before the client; see [local-first rollout](LOCAL_FIRST.md). Keep staging and production data separate and apply directory exports only through the owner’s reviewed import flow.
 
 References: [Google GitHub authentication action](https://github.com/google-github-actions/auth), [Firestore locations](https://firebase.google.com/docs/firestore/locations).
 

@@ -16,7 +16,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   webServer: {
     command:
-      'PUBLIC_USE_EMULATORS=true ASTRO_TELEMETRY_DISABLED=1 astro build --outDir .test-dist && ASTRO_TELEMETRY_DISABLED=1 astro preview --outDir .test-dist --host 127.0.0.1 --port 4179',
+      'PUBLIC_USE_EMULATORS=true ASTRO_TELEMETRY_DISABLED=1 astro build --outDir .test-dist && LCT_SW_ROOT=.test-dist node scripts/build-sw.mjs && ASTRO_TELEMETRY_DISABLED=1 astro preview --outDir .test-dist --host 127.0.0.1 --port 4179',
     url: 'http://127.0.0.1:4179',
     reuseExistingServer: false,
   },

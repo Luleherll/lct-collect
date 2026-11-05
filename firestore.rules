@@ -11,6 +11,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function legacyWrites() { return !exists(/databases/$(database)/documents/config/syncProtocol) || get(/databases/$(database)/documents/config/syncProtocol).data.minimumVersion < 1; }
+    match /config/syncProtocol { allow read: if request.auth != null; allow write: if false; }
+    match /users/{uid}/mutations/{id} { allow read, write: if false; }
     function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
     function active() { return request.auth != null && profile().active == true; }
     function role(value) { return active() && profile().role == value; }
@@ -182,7 +185,7 @@ service cloud.firestore {
     match /users/{uid}/deletedNotes/{id} { allow read, write: if false; }
     match /users/{uid}/notes/{id} {
       allow read: if role('agent') && request.auth.uid == uid;
-      allow create: if role('agent') && request.auth.uid == uid && validNote(request.resource.data,id)
+      allow create: if legacyWrites() && role('agent') && request.auth.uid == uid && validNote(request.resource.data,id)
         && !exists(/databases/$(database)/documents/users/$(uid)/deletedNotes/$(id));
       allow update, delete: if false;
     }
@@ -201,20 +204,20 @@ service cloud.firestore {
     }
     match /sessions/{id} {
       allow read: if role('viewer') || (role('agent') && (resource == null ? id == request.auth.uid + '_' + dayString(request.time + duration.value(1,'h')) : resource.data.agentId == request.auth.uid));
-      allow create: if role('agent') && sessionValid(request.resource.data,id)
+      allow create: if legacyWrites() && role('agent') && sessionValid(request.resource.data,id)
         && request.resource.data.startsAt == currentStart() && current(request.resource.data)
         && request.resource.data.createdAt == request.time && request.resource.data.revision == 0
         && request.resource.data.lastMutationId == '' && request.resource.data.totalDeposits == 0
         && request.resource.data.totalWithdrawals == 0 && request.resource.data.totalLoanInstalments == 0;
-      allow update: if role('agent') && sessionValid(request.resource.data,id) && sessionChange(resource.data,request.resource.data);
+      allow update: if legacyWrites() && role('agent') && sessionValid(request.resource.data,id) && sessionChange(resource.data,request.resource.data);
       allow delete: if false;
     }
     match /entries/{id} {
       allow read: if role('viewer') || (role('agent') && (resource == null || resource.data.agentId == request.auth.uid));
-      allow create: if role('agent') && entryCreate(request.resource.data,id);
-      allow update: if (role('agent') && agentUpdate(resource.data,request.resource.data))
+      allow create: if legacyWrites() && role('agent') && entryCreate(request.resource.data,id);
+      allow update: if legacyWrites() && ((role('agent') && agentUpdate(resource.data,request.resource.data))
         || (role('viewer') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lines'])
-          && recordingLine(resource.data,request.resource.data,changedKind(resource.data,request.resource.data)));
+          && recordingLine(resource.data,request.resource.data,changedKind(resource.data,request.resource.data))));
       allow delete: if false;
     }
   }
