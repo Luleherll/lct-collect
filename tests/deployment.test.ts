@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   readFileSync,
   mkdtempSync,
@@ -11,9 +11,98 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import YAML from 'yaml';
+import {
+  checkPermission,
+  validateRuntime,
+} from '../scripts/check-functions-runtime.mjs';
 const workflow = (name: string) =>
   YAML.parse(readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
 describe('deployment boundaries', () => {
+  it('checks the dedicated runtime before opting out of the CLI default-account check', () => {
+    const step = workflow('deploy-staging').jobs.deploy.steps.find(
+      (s: { name?: string }) => s.name === 'Deploy reminders backend',
+    );
+    expect(step.run.trim().split('\n')[0]).toBe(
+      'node scripts/check-functions-runtime.mjs',
+    );
+    expect(step.run).toContain(
+      'FIREBASE_SKIP_INFORMATIONAL_IAM=true npx -y firebase-tools@15.34.1 deploy --only functions:reminders',
+    );
+    expect(workflow('deploy-staging').jobs.deploy.env).not.toHaveProperty(
+      'FIREBASE_SKIP_INFORMATIONAL_IAM',
+    );
+  });
+  it('rejects default or cross-project runtimes for any exported function', () => {
+    const project = 'lct-collect-staging';
+    const environment = {
+      REMINDER_SERVICE_ACCOUNT: `lct-reminders@${project}.iam.gserviceaccount.com`,
+    };
+    const endpoint = {
+      platform: 'gcfv2',
+      serviceAccountEmail: { name: 'REMINDER_SERVICE_ACCOUNT' },
+    };
+    expect(
+      validateRuntime(project, environment, {
+        manageNote: { __endpoint: endpoint },
+      }),
+    ).toBe(environment.REMINDER_SERVICE_ACCOUNT);
+    for (const unsafe of [
+      {},
+      { ...endpoint, serviceAccountEmail: undefined },
+      { ...endpoint, serviceAccountEmail: { name: 'OTHER_RUNTIME' } },
+      { ...endpoint, platform: 'gcfv1' },
+    ]) {
+      expect(() =>
+        validateRuntime(project, environment, {
+          manageNote: { __endpoint: endpoint },
+          syncOperation: { __endpoint: unsafe },
+        }),
+      ).toThrow('Every function');
+    }
+    expect(() => validateRuntime(project, environment, {})).toThrow();
+    expect(() =>
+      validateRuntime('lct-collect-prod', environment, {
+        manageNote: { __endpoint: endpoint },
+      }),
+    ).toThrow('dedicated runtime');
+  });
+  it('fails closed when the real runtime permission is denied or unavailable', async () => {
+    const project = 'lct-collect-staging';
+    const account = `lct-reminders@${project}.iam.gserviceaccount.com`;
+    const calls: unknown[][] = [];
+    await checkPermission(project, account, async (...args: unknown[]) => {
+      calls.push(args);
+      return { passed: true };
+    });
+    expect(calls).toEqual([
+      [
+        'https://iam.googleapis.com',
+        'v1',
+        `projects/${project}/serviceAccounts/${account}`,
+        ['iam.serviceAccounts.actAs'],
+      ],
+    ]);
+    await expect(
+      checkPermission(project, account, async () => ({ passed: false })),
+    ).rejects.toThrow('cannot use');
+    await expect(
+      checkPermission(project, account, async () => {
+        throw new Error('Unavailable');
+      }),
+    ).rejects.toThrow('Unavailable');
+  });
+  it('refuses an inherited flag that would skip the real runtime check', async () => {
+    const request = vi.fn();
+    vi.stubEnv('FIREBASE_SKIP_INFORMATIONAL_IAM', 'true');
+    try {
+      await expect(
+        checkPermission('lct-collect-staging', 'runtime', request),
+      ).rejects.toThrow('must not be skipped');
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it('routes develop and main to separate permanent Hosting projects', () => {
     for (const [name, branch, project] of [
       ['deploy-staging', 'develop', 'lct-collect-staging'],
