@@ -52,6 +52,14 @@ The provider checks `assertion.environment == 'staging'` directly, together with
 
 The workflow requests `id-token: write` only for its deployment job. Google authentication occurs after tests/build, just before deployment. It uses short-lived credentials instead of `FIREBASE_SERVICE_ACCOUNT`. The Hosting command uses `deploy --only hosting` for the staging project, so it updates the permanent staging URL. A live Hosting channel in the staging project does not deploy the separate production project.
 
+Staging checks every compiled function's explicit dedicated runtime and verifies
+`iam.serviceAccounts.actAs` on that account before deploying Functions. Firebase
+CLI 15.34.1 incorrectly checks the unused App Engine default account first. Only
+the Functions deploy command sets `FIREBASE_SKIP_INFORMATIONAL_IAM=true` to avoid
+that informational check; the explicit runtime check fails on missing permission
+or an API error, and Firebase still enforces authorization during deployment.
+This does not grant access to the default account or change project roles.
+
 ## Activate staging auto-deploy
 
 1. Merge the reviewed application/workflow changes into `develop`; staging already uses permanent Hosting deployment.

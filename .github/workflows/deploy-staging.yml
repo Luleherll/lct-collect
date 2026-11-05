@@ -59,6 +59,8 @@ jobs:
       - name: Deploy Firestore rules and indexes
         run: npx -y firebase-tools@15.34.1 deploy --only firestore:rules,firestore:indexes --project "$FIREBASE_PROJECT_ID" --non-interactive
       - name: Deploy reminders backend
-        run: npx -y firebase-tools@15.34.1 deploy --only functions:reminders --project "$FIREBASE_PROJECT_ID" --non-interactive --force
+        run: |
+          node scripts/check-functions-runtime.mjs
+          FIREBASE_SKIP_INFORMATIONAL_IAM=true npx -y firebase-tools@15.34.1 deploy --only functions:reminders --project "$FIREBASE_PROJECT_ID" --non-interactive --force
       - name: Deploy permanent staging site
         run: npx -y firebase-tools@15.34.1 deploy --only hosting --project "$FIREBASE_PROJECT_ID" --non-interactive
