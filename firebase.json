@@ -20,7 +20,7 @@
         "source": "/api/reminders/validate{,/**}",
         "function": {
           "functionId": "validateReminder",
-          "region": "africa-south1"
+          "region": "europe-west1"
         }
       }
     ]

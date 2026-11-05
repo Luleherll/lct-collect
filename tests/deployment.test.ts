@@ -18,6 +18,27 @@ import {
 const workflow = (name: string) =>
   YAML.parse(readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
 describe('deployment boundaries', () => {
+  it('routes reminder validation to its compiled function in a Hosting-supported region', () => {
+    const config = JSON.parse(readFileSync('firebase.json', 'utf8'));
+    const rewrite = config.hosting.rewrites.find(
+      (rule: { function?: { functionId: string } }) =>
+        rule.function?.functionId === 'validateReminder',
+    );
+    const compiled = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        "import {validateReminder} from './functions/lib/index.js'; console.log(JSON.stringify(validateReminder.__endpoint.region));",
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(compiled.status, compiled.stderr).toBe(0);
+    expect(rewrite.function.region).not.toBe('africa-south1');
+    expect(JSON.parse(compiled.stdout.trim())).toEqual([
+      rewrite.function.region,
+    ]);
+  });
   it('checks the dedicated runtime before opting out of the CLI default-account check', () => {
     const step = workflow('deploy-staging').jobs.deploy.steps.find(
       (s: { name?: string }) => s.name === 'Deploy reminders backend',

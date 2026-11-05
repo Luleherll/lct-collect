@@ -46,7 +46,18 @@ The identity and provider have been created in Google Cloud. No service-account 
 - `roles/serviceusage.serviceUsageViewer`
 - `roles/artifactregistry.reader`
 
-Additional grants are scoped: Cloud Run administration to the four reminder service names; Artifact Registry administration to `gcf-artifacts` repositories; `iam.serviceAccountUser` only on the isolated reminder runtime account; and Secret Manager metadata viewing only on the reminder signing secret. The runtime account, rather than the deploy identity, has datastore access, FCM sending and access to the signing secret value. See [REMINDERS.md](REMINDERS.md).
+Additional grants are scoped: Cloud Run administration to the four reminder service names; Artifact Registry administration to `gcf-artifacts` repositories; `iam.serviceAccountUser` on the isolated reminder runtime account and the staging Functions build account; and Secret Manager metadata viewing only on the reminder signing secret. The runtime account, rather than the deploy identity, has datastore access, FCM sending and access to the signing secret value. See [REMINDERS.md](REMINDERS.md).
+
+The existing staging build account is
+`679421917255-compute@developer.gserviceaccount.com`. After explicit owner
+approval, the deploy identity received `roles/iam.serviceAccountUser` on that
+account only. It currently has project Editor access, which build execution
+inherits. The runtime identity remains the isolated `lct-reminders` account.
+
+Hosting rewrites `/api/reminders/validate/` to the `validateReminder` Firebase
+function in `europe-west1`. Hosting rejects a rewrite to `africa-south1`; keep the
+rewrite and function region aligned. The reminder worker continues to validate
+signed tickets through the same-origin route without enabling cross-origin access.
 
 The provider checks `assertion.environment == 'staging'` directly, together with repository ID `1424838142`, owner ID `36928255`, the `staging` GitHub environment, the exact `deploy-staging.yml` workflow, and the trusted `develop`/`main` refs for push/manual/scheduled events. Pull-request and arbitrary feature-branch tokens are rejected. The Functions permissions support the reminder codebase. The deploy identity has no direct database-record or Firebase user-administration role. The service account can administer security rules, so protect trusted workflow branches appropriately.
 

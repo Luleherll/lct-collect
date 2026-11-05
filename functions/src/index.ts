@@ -427,10 +427,16 @@ async function validDelivery(d: FirebaseFirestore.DocumentData) {
   );
 }
 export const validateReminder = onRequest(
-  { ...options, secrets: [signingKey], cors: false },
+  {
+    ...options,
+    region: 'europe-west1',
+    secrets: [signingKey],
+    cors: false,
+  },
   async (req, res) => {
     res.set('Cache-Control', 'no-store');
-    // HTTPS Hosting rewrite makes this same-origin; signed tickets are limited capabilities.
+    // Hosting supports this region for the same-origin rewrite. Signed tickets
+    // are limited capabilities; validation state stays in the same database.
     if (req.method !== 'POST') {
       res.status(405).end();
       return;

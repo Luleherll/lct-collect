@@ -325,7 +325,7 @@ describe.skipIf(!enabled)('reminder dispatch and device ownership', () => {
           .digest('base64url');
     const verify = async (value = ticket) => {
       const r = await fetch(
-        'http://127.0.0.1:5001/demo-lct-collect/africa-south1/validateReminder',
+        'http://127.0.0.1:5001/demo-lct-collect/europe-west1/validateReminder',
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
