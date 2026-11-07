@@ -222,6 +222,45 @@ test('owner imports separate accounts under member/group numbers and preserves i
   ).toHaveCount(0);
 });
 
+test('owner can preview and apply the savings-list CSV without renaming its columns', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await login(page, 'admin');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'savings-list.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(
+      'Name,Client Unique #,Saving Account #,Created At,Product,Balance UGX,Mobile,District,Last Transaction,Status,\n' +
+        'Ms. Export Example,LCT9901,009901,,Savings account,"120,000",,,,Open,View/Modify\n' +
+        'Ms. Export Example,LCT9901,009902,,Fixed Deposit account.,500000,,,,Open,View/Modify\n',
+    ),
+  });
+  await expect(
+    page.getByRole('heading', { name: 'Review import' }),
+  ).toBeVisible();
+  await expect(page.locator('tbody tr')).toHaveCount(2);
+  await expect(page.locator('tbody')).toContainText('009901');
+  await expect(page.locator('tbody')).toContainText('009902');
+  await expect(
+    page.getByRole('button', { name: 'Apply updates' }),
+  ).toBeEnabled();
+  await page.getByRole('button', { name: 'Apply updates' }).click();
+  await expect(
+    page.getByText('Member directory updated.', { exact: true }),
+  ).toBeVisible({ timeout: 100_000 });
+  await page.getByLabel('Search directory', { exact: true }).fill('LCT9901');
+  await expect(page.locator('.directory-list')).toContainText(
+    'Ms. Export Example',
+  );
+  await expect(page.locator('.directory-list summary')).toContainText(
+    '2 accounts',
+  );
+  await expect(page.locator('.directory-list .member-account')).toHaveCount(2);
+  await expect(page.locator('.directory-list')).toContainText('009901');
+  await expect(page.locator('.directory-list')).toContainText('009902');
+});
+
 test('blocked Web Storage keeps reads usable and accepts durable IndexedDB writes', async ({
   page,
 }) => {
