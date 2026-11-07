@@ -128,7 +128,9 @@ async function ensureSecret(api, settings, randomBytes = crypto.randomBytes) {
   let pageToken;
   do {
     const response = (
-      await api.get(path + '/versions', { queryParams: { pageToken } })
+      await api.get(path + '/versions', {
+        queryParams: pageToken ? { pageToken } : {},
+      })
     ).body;
     versions.push(...(response.versions || []));
     pageToken = response.nextPageToken;

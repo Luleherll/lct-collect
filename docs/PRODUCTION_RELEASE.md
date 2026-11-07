@@ -45,15 +45,31 @@ the deploy identity use of it. Review that account's effective privileges before
 explicitly adding `--allow-privileged-build-account`; that flag is not the default.
 
 On a fresh project, setup reports missing Functions and exits **2** after
-provisioning prerequisites. Initialize the reviewed backend once as the owner:
+provisioning prerequisites. An existing Editor build account also stops setup
+before delegation. Initialize the reviewed backend once as the owner:
 
 ```sh
+npx -y firebase-tools@15.34.1 deploy --only firestore:indexes \
+  --project lct-collect-prod
 npx -y firebase-tools@15.34.1 deploy --only functions:reminders \
   --project lct-collect-prod
 ```
 
 This publishes the backend and creates its scheduled reminder dispatcher; it
-does not publish Hosting. Run owner setup with `--apply` again afterwards. It
+does not publish Hosting. When the default build account has Editor, configure
+a dedicated Firebase Functions build identity instead of delegating that account:
+
+```sh
+node scripts/configure-functions-build.cjs --project lct-collect-prod
+node scripts/configure-functions-build.cjs --project lct-collect-prod --apply
+```
+
+This creates `lct-functions-build` with the build role and updates only
+`buildConfig.serviceAccount` on the five Functions. It preserves runtime,
+invocation, application code and database state. Reruns skip completed targets;
+existing unrelated roles on that identity stop the migration for review. It does
+not grant GitHub use of the original Editor account. Run owner setup with
+`--apply` again afterwards. It
 binds deployment administration directly to all five existing managed services,
 including `syncOperation`. The four HTTP entry points receive public transport
 invocation; callable handlers still require Firebase Authentication/roles, and

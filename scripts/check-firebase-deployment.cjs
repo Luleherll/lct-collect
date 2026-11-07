@@ -32,7 +32,7 @@ async function checkDeployment(project, makeClient = client) {
     const versions = (
       await secrets.get(
         `/projects/${project}/secrets/REMINDER_SIGNING_KEY/versions`,
-        { queryParams: { pageToken } },
+        { queryParams: pageToken ? { pageToken } : {} },
       )
     ).body;
     enabledSecret ||= (versions.versions || []).some(

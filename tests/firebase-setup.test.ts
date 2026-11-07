@@ -19,6 +19,10 @@ const {
   bootstrap,
 } = require('../scripts/setup-reminders.cjs');
 const { checkDeployment } = require('../scripts/check-firebase-deployment.cjs');
+const {
+  configureBuild,
+  buildPlan,
+} = require('../scripts/configure-functions-build.cjs');
 const settings = config('lct-collect-prod');
 const build = '275805072037-compute@developer.gserviceaccount.com';
 function fixture() {
@@ -124,6 +128,10 @@ function fixture() {
       }
       if (host === 'cloudfunctions') {
         if (!state.installed) throw { status: 404 };
+        if (method === 'patch') {
+          state.buildAccount = body.buildConfig.serviceAccount;
+          return { body: { done: true } };
+        }
         const fn = functions.find((f: any) => path.endsWith('/' + f.name));
         expect(fn).toBeDefined();
         return {
@@ -151,6 +159,8 @@ function fixture() {
         request('post', path, body, opts),
       put: (path: string, body: any, opts?: any) =>
         request('put', path, body, opts),
+      patch: (path: string, body: any, opts?: any) =>
+        request('patch', path, body, opts),
     };
   };
   return { state, makeClient };
@@ -412,6 +422,10 @@ describe('Firebase owner setup boundaries', () => {
     const version = state.calls.find((call) =>
       call.path.endsWith(':addVersion'),
     )!;
+    const firstPage = state.calls.find((call) =>
+      call.path.endsWith('/versions'),
+    )!;
+    expect(firstPage.options.queryParams).not.toHaveProperty('pageToken');
     expect(version.options.skipLog).toEqual({ body: true, resBody: true });
     expect(state.versions).toEqual([{ state: 'ENABLED' }]);
     expect(state.calls.some((call) => call.path.includes(':access'))).toBe(
@@ -467,6 +481,10 @@ describe('production deployment readiness', () => {
     expect(
       state.calls.filter((call) => call.path.endsWith(':setIamPolicy')),
     ).toHaveLength(0);
+    expect(
+      state.calls.find((call) => call.path.endsWith('/versions'))!.options
+        .queryParams,
+    ).not.toHaveProperty('pageToken');
   });
   it.each(['apiEnabled', 'public', 'actAs', 'managePolicy'] as const)(
     'fails closed when %s is missing',
@@ -506,5 +524,76 @@ describe('production deployment readiness', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+describe('dedicated Firebase Functions build identity', () => {
+  it('moves only the build identity and preserves the default Editor account', async () => {
+    const { state, makeClient } = fixture();
+    const baseline = {
+      etag: 'editor-account',
+      bindings: [
+        { role: 'roles/editor', members: [`serviceAccount:${build}`] },
+      ],
+    };
+    state.policies.set(
+      'cloudresourcemanager/projects/lct-collect-prod',
+      baseline,
+    );
+    const result = await configureBuild(settings.project, makeClient);
+    expect(result).toEqual({
+      account: 'lct-functions-build@lct-collect-prod.iam.gserviceaccount.com',
+      updated: 5,
+    });
+    const patches = state.calls.filter((call) => call.method === 'patch');
+    expect(patches).toHaveLength(5);
+    for (const patch of patches) {
+      expect(patch.options.queryParams.updateMask).toBe(
+        'buildConfig.serviceAccount',
+      );
+      expect(Object.keys(patch.body).sort()).toEqual(['buildConfig', 'name']);
+      expect(patch.body.buildConfig.serviceAccount).toBe(
+        `projects/lct-collect-prod/serviceAccounts/${result.account}`,
+      );
+    }
+    expect(
+      state.policies.get('cloudresourcemanager/projects/lct-collect-prod')
+        .bindings[0],
+    ).toEqual(baseline.bindings[0]);
+    expect(
+      state.calls.some((call) =>
+        call.path.includes(`/serviceAccounts/${build}:setIamPolicy`),
+      ),
+    ).toBe(false);
+    expect((await configureBuild(settings.project, makeClient)).updated).toBe(
+      0,
+    );
+    expect(state.calls.filter((call) => call.method === 'patch')).toHaveLength(
+      5,
+    );
+  });
+  it('rejects missing Functions before creating or assigning the identity', async () => {
+    const { state, makeClient } = fixture();
+    state.installed = false;
+    await expect(
+      configureBuild(settings.project, makeClient),
+    ).rejects.toBeDefined();
+    expect(state.calls.some((call) => call.method !== 'get')).toBe(false);
+  });
+  it('refuses an existing dedicated identity with unrelated broad roles', async () => {
+    const { state, makeClient } = fixture();
+    const target = buildPlan(settings.project).account;
+    state.policies.set('cloudresourcemanager/projects/lct-collect-prod', {
+      etag: 'broad',
+      bindings: [
+        { role: 'roles/editor', members: [`serviceAccount:${target}`] },
+      ],
+    });
+    await expect(configureBuild(settings.project, makeClient)).rejects.toThrow(
+      'other project roles',
+    );
+    expect(state.calls.some((call) => call.method === 'patch')).toBe(false);
+    expect(
+      state.calls.some((call) => call.path.endsWith(':setIamPolicy')),
+    ).toBe(false);
   });
 });
