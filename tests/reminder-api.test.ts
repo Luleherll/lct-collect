@@ -334,10 +334,32 @@ describe.skipIf(!enabled)('reminder dispatch and device ownership', () => {
       );
       return { status: r.status, data: await r.json() };
     };
-    expect((await verify()).data.valid).toBe(true);
-    expect((await verify('forged')).status).toBe(403);
+    expect((await verify()).data).toMatchObject({
+      valid: true,
+      preview: 'Remember the passbook',
+    });
+    // Body edits do not change the schedule identity: validate current text,
+    // without including member metadata or copying descriptions into FCM.
+    await db.doc(`users/demo-agent/notes/${noteId}`).update({
+      body: '  Bring the passbook.\nConfirm the balance. ' + 'x'.repeat(140),
+      tags: [{ fullName: 'Private member metadata' }],
+    });
+    const current = (await verify()).data;
+    expect(current.preview).toBe(
+      'Bring the passbook. Confirm the balance. ' + 'x'.repeat(78) + '…',
+    );
+    expect(Object.keys(current).sort()).toEqual([
+      'eventId',
+      'path',
+      'preview',
+      'uid',
+      'valid',
+    ]);
+    const forged = await verify('forged');
+    expect(forged.status).toBe(403);
+    expect(forged.data).toEqual({ valid: false });
     await register('second-agent');
-    expect((await verify()).data.valid).toBe(false);
+    expect((await verify()).data).toEqual({ valid: false });
     await register('demo-agent');
     await call('demo-agent', {
       action: 'done',
@@ -347,7 +369,7 @@ describe.skipIf(!enabled)('reminder dispatch and device ownership', () => {
       occurrenceAt: at,
       mutationId: randomUUID(),
     });
-    expect((await verify()).data.valid).toBe(false);
+    expect((await verify()).data).toEqual({ valid: false });
     await call('demo-agent', {
       action: 'done',
       noteId,
@@ -363,7 +385,7 @@ describe.skipIf(!enabled)('reminder dispatch and device ownership', () => {
       expectedRevision: 3,
       mutationId: randomUUID(),
     });
-    expect((await verify()).data.valid).toBe(false);
+    expect((await verify()).data).toEqual({ valid: false });
     expect(
       (await db.doc(`users/demo-agent/deletedNotes/${noteId}`).get()).data()
         ?.dueAt,

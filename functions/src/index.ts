@@ -5,6 +5,7 @@ import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret, defineString } from 'firebase-functions/params';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { reminderPreview } from './notification.js';
 import {
   parseReminder,
   firstOccurrence,
@@ -405,7 +406,7 @@ function readTicket(value: unknown): { id: string; exp: number } | null {
     return null;
   }
 }
-async function validDelivery(d: FirebaseFirestore.DocumentData) {
+async function readValidDeliveryNote(d: FirebaseFirestore.DocumentData) {
   const [note, device, profile] = await Promise.all([
     db.doc(`users/${d.uid}/notes/${d.noteId}`).get(),
     db.doc(`reminderDevices/${d.deviceId}`).get(),
@@ -414,8 +415,7 @@ async function validDelivery(d: FirebaseFirestore.DocumentData) {
   const n = note.data(),
     dev = device.data(),
     p = profile.data();
-  return !!(
-    n &&
+  return n &&
     dev?.enabled &&
     dev.uid === d.uid &&
     p?.active === true &&
@@ -424,7 +424,8 @@ async function validDelivery(d: FirebaseFirestore.DocumentData) {
     n.occurrenceAt === d.occurrenceAt &&
     !n.done &&
     d.expiresAt.toMillis() > Date.now()
-  );
+    ? n
+    : null;
 }
 export const validateReminder = onRequest(
   {
@@ -448,7 +449,8 @@ export const validateReminder = onRequest(
     }
     const snap = await db.doc(`reminderDeliveries/${parsed.id}`).get(),
       d = snap.data();
-    if (!d || !(await validDelivery(d))) {
+    const note = d && (await readValidDeliveryNote(d));
+    if (!note) {
       res.json({ valid: false });
       return;
     }
@@ -456,6 +458,7 @@ export const validateReminder = onRequest(
       valid: true,
       uid: d.uid,
       eventId: snap.id,
+      preview: reminderPreview(note.body),
       path: `/agent/notes/?note=${encodeURIComponent(d.noteId)}`,
     });
   },
@@ -561,7 +564,7 @@ export const dispatchReminders = onSchedule(
         return v;
       });
       if (!d) continue;
-      if (!(await validDelivery(d))) {
+      if (!(await readValidDeliveryNote(d))) {
         await item.ref.update({ status: 'cancelled' });
         continue;
       }

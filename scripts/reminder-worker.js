@@ -82,14 +82,25 @@ async function receiveReminder(data) {
       reject(tx.error);
     };
   });
-  if (!first) return;
+  if (!first || (await reminderState('owner')) !== result.uid) return;
   await self.registration.showNotification('LCT Collect reminder', {
-    body: 'A note is due. Tap to view it.',
+    body:
+      typeof result.preview === 'string' && result.preview.trim()
+        ? result.preview
+        : 'A note is due. Tap to view it.',
     icon: '/icons/icon-192.png',
-    badge: '/icons/logo-64.png',
+    badge: '/icons/notification-badge.png',
     tag: result.eventId,
     data: { path: result.path, uid: result.uid },
   });
+  // An account switch can happen while the platform is displaying the alert.
+  if ((await reminderState('owner')) !== result.uid) await dismissOtherOwners();
+}
+async function dismissOtherOwners() {
+  const notifications = await self.registration.getNotifications();
+  const owner = await reminderState('owner');
+  for (const notification of notifications)
+    if (!owner || notification.data?.uid !== owner) notification.close();
 }
 self.addEventListener('push', (event) => {
   let message;
@@ -106,7 +117,9 @@ self.addEventListener('push', (event) => {
 });
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'REMINDER_OWNER')
-    event.waitUntil(reminderState('owner', event.data.uid));
+    event.waitUntil(
+      reminderState('owner', event.data.uid).then(dismissOtherOwners),
+    );
   if (event.data?.type === 'REMINDER_PUSH')
     event.waitUntil(receiveReminder(event.data.data).catch(() => {}));
 });
