@@ -48,14 +48,28 @@ export function csvRows(text: string): string[][] {
 }
 export function planImport(text: string, existing: Member[]): ImportPlan {
   const table = csvRows(text),
-    headers = table.shift()?.map((h) => h.trim().toLowerCase()) ?? [];
-  const cols = ['account number', 'unique number', 'account name'].map((k) =>
-    headers.indexOf(k),
-  );
-  if (cols.some((i) => i < 0))
-    throw new Error(
-      'Required columns: Account Number, Unique Number and Account Name. Keep all accounts in the export.',
+    headers =
+      table.shift()?.map((h) => h.trim().replace(/\s+/g, ' ').toLowerCase()) ??
+      [];
+  const cols = [
+    ['Account Number', 'Saving Account #'],
+    ['Unique Number', 'Client Unique #'],
+    ['Account Name', 'Name'],
+  ].map((names) => {
+    const aliases = names.map((name) => name.toLowerCase());
+    const matches = headers.flatMap((header, index) =>
+      aliases.includes(header) ? [index] : [],
     );
+    if (!matches.length)
+      throw new Error(
+        `Missing column: ${names[0]} (or ${names[1]}). Use the original Ssentezo CSV export.`,
+      );
+    if (matches.length > 1)
+      throw new Error(
+        `More than one column matches ${names[0]}. Keep only one of: ${names.join(', ')}.`,
+      );
+    return matches[0];
+  });
   const legacyColumn = headers.indexOf('account id');
   const rows: ImportRow[] = [],
     errors: string[] = [],
