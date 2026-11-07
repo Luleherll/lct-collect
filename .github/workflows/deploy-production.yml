@@ -40,6 +40,7 @@ jobs:
         run: |
           node scripts/check-env.mjs
           node --env-file=.env -e "if(process.env.PUBLIC_FIREBASE_PROJECT_ID!==process.env.FIREBASE_PROJECT_ID)process.exit(1)"
+          node scripts/check-reminder-env.mjs
       - run: npm ci
       - run: npm ci --prefix functions
       - run: npm --prefix functions run build
@@ -55,7 +56,6 @@ jobs:
           service_account: lct-github-prod@lct-collect-prod.iam.gserviceaccount.com
       - name: Verify reminder setup
         run: |
-          node scripts/check-reminder-env.mjs
           npx -y firebase-tools@15.34.1 functions:secrets:get REMINDER_SIGNING_KEY --project "$FIREBASE_PROJECT_ID" --non-interactive
           node scripts/check-functions-runtime.mjs
           node scripts/check-firebase-deployment.cjs

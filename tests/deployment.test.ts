@@ -86,6 +86,10 @@ describe('deployment boundaries', () => {
     const verify = steps.findIndex(
       (s: { name?: string }) => s.name === 'Verify reminder setup',
     );
+    const environment = steps.find(
+      (s: { name?: string }) => s.name === 'Verify environment separation',
+    );
+    expect(environment.run).toContain('node scripts/check-reminder-env.mjs');
     const rules = steps.findIndex(
       (s: { name?: string }) => s.name === 'Deploy Firestore rules and indexes',
     );

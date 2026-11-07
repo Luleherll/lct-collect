@@ -230,6 +230,29 @@ describe('Firebase owner setup boundaries', () => {
     ])
       expect(() => accountEmail(account, settings)).toThrow();
   });
+  it('does not duplicate conditional grants when the API reorders condition properties', () => {
+    const policy = {
+      etag: 'keep',
+      version: 3,
+      bindings: [
+        {
+          role: 'roles/artifactregistry.admin',
+          members: ['deploy'],
+          condition: {
+            expression: 'approved',
+            description: '',
+            title: 'Images',
+          },
+        },
+      ],
+    };
+    const next = grant(policy, 'roles/artifactregistry.admin', 'deploy', {
+      title: 'Images',
+      expression: 'approved',
+    });
+    expect(next.changed).toBe(false);
+    expect(next.policy.bindings).toHaveLength(1);
+  });
   it('waits for API activation and reports operation failures and timeouts', async () => {
     const get = vi
       .fn()

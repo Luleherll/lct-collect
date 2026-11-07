@@ -41,7 +41,11 @@ function grant(policy, role, member, condition) {
   let binding = next.bindings.find(
     (b) =>
       b.role === role &&
-      JSON.stringify(b.condition) === JSON.stringify(condition),
+      (!b.condition || !condition
+        ? b.condition === condition
+        : ['expression', 'title', 'description'].every(
+            (key) => (b.condition[key] || '') === (condition[key] || ''),
+          )),
   );
   if (binding?.members.includes(member))
     return { policy: next, changed: false };
@@ -55,7 +59,7 @@ function grant(policy, role, member, condition) {
 }
 function hasGrant(policy, role, member) {
   return !!policy.bindings?.some(
-    (b) => b.role === role && !b.condition && b.members.includes(member),
+    (b) => b.role === role && !b.condition && b.members?.includes(member),
   );
 }
 function accountEmail(value, settings) {
@@ -111,6 +115,10 @@ async function authenticate(project, credentialPath) {
   const account = credentialPath
     ? JSON.parse(require('node:fs').readFileSync(credentialPath, 'utf8'))
     : getGlobalDefaultAccount();
+  if (credentialPath && (!account?.user || !account?.tokens))
+    throw new Error(
+      'The selected file must contain a signed-in Firebase CLI account.',
+    );
   await requireAuth({ project, ...(account || {}), nonInteractive: true });
 }
 function client(host, version = 'v1') {
