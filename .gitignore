@@ -20,3 +20,8 @@ test-results/
 
 preview-dist/
 preview.firebase.json
+
+functions/lib/
+functions/.env.local
+functions/.secret.local
+gha-creds-*.json

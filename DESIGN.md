@@ -62,16 +62,56 @@ Flat bordered panels. Dimmed native dialog backdrop; no ornamental shadows.
 
 ## Components
 
-`SearchField`, `Modal`, `Account`, `ErrorBoundary`, and `useRecords` are shared owners. `Login` and `MemberAdmin` load on demand. Internal routes retain the mounted app, authentication and unchanged query subscriptions. States use text as well as color, focus rings and >=44px touch targets. Search clearing restores input focus; forms preserve invalid text. Entry success uses a six-second dismissible toast with account and amounts; errors remain visible. No financial success precedes server confirmation. Viewed records cache automatically, and sign-out attempts to clear the cache.
+`SearchField`, `Modal`, `Account`, `ErrorBoundary`, and `useRecords` are shared owners. `Login` is immediately available; `MemberAdmin` loads on demand. Internal routes retain the mounted app, authentication and unchanged query subscriptions. States use text as well as color, focus rings and >=44px touch targets. Search clearing restores input focus; forms preserve invalid text. Entry success uses a six-second dismissible toast with account and amounts; errors remain visible. Local success follows durable device storage and explicitly says Saved on this device. Confirmed records and pending projections remain distinct; sign-out preserves unresolved work when requested.
 
 ## Do's and Don'ts
 
-Show a member/group result with name, unique number and an explicit Group chip for ABC identifiers. In the owner directory, one-account results show the account number directly and have no redundant disclosure; multi-account results show the count and expand for all account numbers. Expand the card to list all separate numeric Ssentezo accounts; the agent selects one before entry. The selected form/review shows the member number and account number. Preserve zeros, wrap long values and keep internal document IDs hidden. Confirm discarding drafts/account switches. Do not persist financial drafts or enqueue financial writes. Keep the chosen navy/green identity across collection, history, office register, owner imports and sign-in. Native select/date popups remain OS-owned; do not fake a custom dropdown. Visual verification uses synthetic emulator accounts only.
+Show a member/group result with name, unique number and an explicit Group chip for ABC identifiers. In the owner directory, one-account results show the account number directly and have no redundant disclosure; multi-account results show the count and expand for all account numbers. Expand the card to list all separate numeric Ssentezo accounts; the agent selects one before entry. The selected form/review shows the member number and account number. Preserve zeros, wrap long values and keep internal document IDs hidden. Confirm discarding drafts/account switches. Persist drafts and accepted commands separately, isolated by project and user. Keep the chosen navy/green identity across collection, history, office register, owner imports and sign-in. Native select/date popups remain OS-owned; do not fake a custom dropdown. Visual verification uses synthetic emulator accounts only.
 
 Single-account search results select their account in one tap; multi-account results expand for explicit account selection. The viewer uses a compact title/date row, collapsed workday totals, page-local search and paired native status/type filters and no redundant Register navigation. Register reads use 50-entry cursor pages (each saved entry can contain up to three transaction lines); totals come from workday sessions, not the current page. Recording has an in-button busy state and a six-second toast with Undo. The Recorded status filter retains Undo after the toast closes.
 
-Agent loading uses a blocking translucent overlay while waiting for initial server data, without a connecting/cache card. An eight-second connection timeout or offline event releases cached viewing and shows a compact stale-data status; writes still require a server-confirmed connection. Agent history shows at most the five latest workdays, with compact transaction totals and expected cash. A shared Pagination control serves transaction lines, directory/search groups, account sublists, import previews and import errors. Every result page has at most 50 rows; remote cursors resume within multi-line entries so no line is dropped. Recording audit is already bounded to 40 events. The viewer keeps unrestricted date selection; history is not deleted.
+Cached working content stays interactive during refresh. Only unavailable sections show loading; there is no eight-second confirmation overlay. History prepares the latest five workdays, while the viewer retains date selection. Shared Pagination displays at most 50 lines from downloaded workday data without dropping multi-line entries. Recording history remains bounded to 40 events.
 
 Minimalist production pass: shared rows have a restrained hover/focus treatment, active navigation exposes aria-current, and financial figures keep tabular numerals. Login associates inline validation with its fields, focuses the first invalid field, masks passwords by default and exposes a named visibility toggle; pending sign-in prevents duplicate submissions. Pagination returns keyboard focus and scrolling to loaded entry results after a user page change. Desktop register status appears once; its time remains visible. CSV preview headings stay visible inside the bounded table scroller. No new navigation destinations, dashboards, decorative cards or financial state changes are introduced.
 
-Brand assets use the supplied Lusaze artwork: a compact white-backed 28px mark beside LCT Collect in the shared Brand component, including sign-in and initial loading. Browser favicons, Apple touch icon and PNG PWA icons share this artwork; the maskable icon keeps it within the central 80% safe zone. Owner directory loading reuses the agent overlay, eight-second timeout and compact offline fallback.
+Brand assets use the supplied Lusaze artwork: a compact white-backed 28px mark beside LCT Collect in the shared Brand component, including sign-in and initial loading. Browser favicons, Apple touch icon and PNG PWA icons share this artwork; the maskable icon keeps it within the central 80% safe zone. Owner directory shows cached results immediately; imports remain online and require a fresh preview.
+
+Account-type and notes update (31 October 2026): agent search no longer expands multi-account results; one tap selects the member/group and displays the account count. Each non-empty amount for such a member requires Fixed or Saving. This is intent, not an assigned real account; the viewer resolves it manually in Ssentezo. Single-account selection remains automatic; the owner directory continues to display individual accounts. A 64px optional entry note appears before review actions; it is immutable with the entry, visible to its agent and the viewer in details. Private agent notes use /agent/notes/, inline creation above newest-first 50-note cursor pages, shared modal viewing, plain text up to 2,000 characters, server-confirmed saves and toast feedback. No completion controls, editing or deletion. Drafts remain in memory and navigation requires discard confirmation; cached viewing is automatic, all writes remain online. Expected cash follows the entry form. Header spacing is reduced while preserving 44px controls, the existing logo, colors and keyboard focus. Login subtitle is Lusaze Community Traders. This current user decision supersedes earlier agent account-expansion/explicit-number selection guidance.
+
+Header/form refinement: agent header keeps Notes directly visible; More contains Recent entries, History and Sign out. Other roles also get More → Sign out. The shared HeaderMenu owns outside-dismiss, Escape/focus restoration, arrow/Home/End keyboard navigation and native menu item semantics; navigation/sign-out keep the existing draft guard. The footer is removed in favour of safe-area bottom padding. Single- and multi-account agent search buttons share a full-width row style. All amount rows show the account-type select, disabled for single-account/no selection; multi-account amount inputs remain disabled until that row has a type. Clearing the type clears the dependent amount to prevent saving stale amounts.
+
+Reminder notes update: loan instalments always show UGX and are enabled once a member is selected; deposit/withdrawal account selection is unchanged. General notes gain up to ten member/group tags, None/Once/Weekly schedules in Africa/Kampala, owner-only editing and completion. Inline controls reveal details on demand. A weekly completion applies to one occurrence, which reopens at the following scheduled occurrence. All upgraded mutations use authenticated server APIs with revision checks and preserve drafts on failure. The existing popup supports viewing/editing; entry notes remain immutable financial snapshots. Direct note links survive login and honour the collection draft guard. Explicit Enable reminders is the only permission-prompt action; previews link to the permanent app for push setup. Notifications show up to 120 graphemes of the validated current note description, without appended member tags. Android uses a transparent monochrome version of the app logo for the small badge; the large icon retains the full-color artwork. Visible reminders close on sign-out/account switches. Due notes remain readable when notifications are unavailable.
+
+Local-first update (November 2026): the approved user decision replaces the
+blocking initial overlay and online-only policies above. Keep the established
+navy/green visual tokens and layout. Show cached working content immediately,
+use section-level loading only for missing data, and never show intermediate
+access/sign-out screens during normal transitions. Durable local acceptance
+uses "Saved on this device" feedback; only unsynced items show sync labels.
+
+Approved Notes redesign (4 November 2026): Upcoming is a date-grouped agenda with
+EAT times, round completion controls, quiet member metadata and a collapsed
+Without a reminder section. All notes retains newest-first browsing, including
+completed notes. Each list presents at most 50 records after filtering. Keep a
+full-width New note action anchored above the safe area. Creation and editing
+use the shared Modal's bottom-sheet variant: the original brand header stays
+behind a dimmed backdrop, and the sheet contains only the editor. Borderless
+18px note text, a live character count and divider-separated Members/Reminder
+rows reproduce the approved draft. Both rows disclose their settings inline;
+None/Once/Weekly uses a segmented button group, with OS-owned date/time/weekday
+inputs. Sheet header and Cancel/Save footer remain outside the internal scroll
+region and follow the visual viewport when the keyboard opens. Use the existing
+16px dialog radius at the top corners; no new palette or typography tokens.
+Delete and complete/reopen actions live in the existing note's action disclosure.
+The bell opens notification setup on demand. This supersedes inline creation,
+view-before-edit and per-row trash guidance above. Durable local saves, recovery,
+revision conflicts, private ownership and unsynced-only indicators remain in force.
+
+Notes sheet refinement (4 November 2026): the user's follow-up changes sheet height
+to 90% of the screen, capped by the visible viewport when a keyboard opens.
+Member search uses the shared AnchoredResults surface. It chooses above or below
+from the usable space between the sheet header/footer and the visual viewport,
+repositions during scrolling/resizing, and scrolls long result lists internally.
+The popup is portalled inside the native dialog so it remains in the modal's
+focus/inert boundary and escapes the body's clipping. The runtime `--z-popover`
+token owns its layer. Keep the existing control border, radius and flat surface.

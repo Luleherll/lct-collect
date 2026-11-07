@@ -6,18 +6,37 @@ import { usePagination } from '../hooks/usePagination';
 export default function MemberResults({
   groups,
   onSelect,
+  onSelectGroup,
   disabled = false,
   searching = false,
 }: {
   groups: MemberGroup[];
   onSelect?: (account: Member) => void;
+  onSelectGroup?: (group: MemberGroup) => void;
   disabled?: boolean;
   searching?: boolean;
 }) {
   return (
     <div className="member-results" aria-label="Matching members">
       {groups.map((g) =>
-        onSelect && g.accounts.length === 1 ? (
+        onSelectGroup && g.accounts.length > 1 ? (
+          <button
+            key={g.key}
+            className="member-result multi-account"
+            disabled={disabled}
+            onClick={() => onSelectGroup(g)}
+          >
+            <span className="member-result-identity">
+              <strong>{g.fullName}</strong>
+              <span>
+                {g.uniqueNumber}{' '}
+                {g.group && <span className="group-chip">Group</span>}
+              </span>
+            </span>
+            <span className="account-count">{g.accounts.length} accounts</span>
+            <Icon name="chevron-right" />
+          </button>
+        ) : onSelect && g.accounts.length === 1 ? (
           <button
             key={g.key}
             className="member-result single-account"

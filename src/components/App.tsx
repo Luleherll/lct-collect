@@ -1,5 +1,12 @@
-import { matchesAccount, groupAccounts } from '../lib/account';
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import SyncQueue from './SyncQueue';
+import { useOfflinePreparation } from '../hooks/useOfflinePreparation';
+import SyncState from './SyncState';
+import {
+  matchesAccount,
+  groupAccounts,
+  type MemberGroup,
+} from '../lib/account';
+import { lazy, Suspense, useEffect, useRef, useState, useMemo } from 'react';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, onSnapshot, orderBy, limit, where } from 'firebase/firestore';
 import {
@@ -19,6 +26,9 @@ import {
 } from '../lib/domain';
 import {
   LABELS,
+  ACCOUNT_TYPES,
+  entryAccountLabel,
+  type AccountType,
   TYPES,
   type Entry,
   type LineType,
@@ -37,10 +47,23 @@ import {
 
 import Icon from './Icon';
 import Pagination from './Pagination';
-import LoadingOverlay from './LoadingOverlay';
+import {
+  durableStorageAvailable,
+  openLocal,
+  changeLocal,
+  localState,
+  closeLocal,
+} from '../lib/local';
+import { useLocalVersion } from '../hooks/useLocal';
+import { startSync } from '../lib/sync';
+import Login from './Login';
 import Brand from './Brand';
+import HeaderMenu from './HeaderMenu';
 import { usePagination } from '../hooks/usePagination';
 import MemberResults from './MemberResults';
+import Notes from './Notes';
+import { restoreReminders } from '../lib/notifications';
+import { usePagedNotes } from '../hooks/usePagedNotes';
 import Modal from './Modal';
 import { Account, Status } from './Account';
 import { usePagedEntries } from '../hooks/usePagedEntries';
@@ -48,12 +71,13 @@ import { useRecords } from '../hooks/useRecords';
 import { storage } from '../lib/storage';
 import { message } from '../lib/errors';
 import SearchField from './SearchField';
-const Login = lazy(() => import('./Login'));
+
 const MemberAdmin = lazy(() => import('./MemberAdmin'));
 
 const HOME = { agent: '/agent/', viewer: '/viewer/', admin: '/admin/' };
 type Receipt = Pick<
   Entry,
+  | 'accountSelection'
   | 'entryId'
   | 'memberId'
   | 'memberNameSnapshot'
@@ -63,10 +87,14 @@ type Receipt = Pick<
   | 'uniqueNumberSnapshot'
 > & {
   createdAt?: Entry['createdAt'];
-  lines: Partial<Record<LineType, { amount: number }>>;
+  lines: Partial<
+    Record<LineType, { amount: number; accountType?: AccountType }>
+  >;
 };
 const EMPTY_AMOUNTS = { deposit: '', withdrawal: '', loanInstalment: '' };
 export default function App({ route: initialRoute }: { route: string }) {
+  useLocalVersion();
+  const [localReady, setLocalReady] = useState(false);
   const [route, setRoute] = useState(initialRoute);
   const [user, setUser] = useState<User | null>(null),
     [profile, setProfile] = useState<Profile | null>(null),
@@ -75,8 +103,7 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [today, setToday] = useState(workday()),
     [date, setDate] = useState(workday()),
     [historyDay, setHistoryDay] = useState('');
-  const [network, setNetwork] = useState(navigator.onLine),
-    [lastSync, setLastSync] = useState('');
+  const [network, setNetwork] = useState(navigator.onLine);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
@@ -94,6 +121,13 @@ export default function App({ route: initialRoute }: { route: string }) {
     loanInstalment: 0,
   });
   const [reviewSessionId, setReviewSessionId] = useState('');
+  const [otherAccountId, setOtherAccountId] = useState('');
+  const [accountTypes, setAccountTypes] = useState<
+    Partial<Record<LineType, AccountType>>
+  >({});
+  const [entryNote, setEntryNote] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [noteExtraDirty, setNoteExtraDirty] = useState(false);
   const pendingId = useRef(''),
     [uncertain, setUncertain] = useState(false);
   const [q, setQ] = useState(''),
@@ -114,18 +148,77 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [markingRow, setMarkingRow] = useState('');
   const [undoRow, setUndoRow] = useState<Row | null>(null);
-  const [connectionWaited, setConnectionWaited] = useState(false);
-  const dirty = TYPES.some((t) => values[t].trim() !== '');
+
+  const dirty =
+    TYPES.some((t) => values[t].trim() !== '') ||
+    !!entryNote.trim() ||
+    (route === 'notes' && (!!noteDraft.trim() || noteExtraDirty));
+  const draftLoaded = useRef('');
+  useEffect(() => {
+    if (!localReady || !user || draftLoaded.current === user.uid) return;
+    draftLoaded.current = user.uid;
+    const d = localState().drafts?.collection;
+    if (d) {
+      pendingId.current =
+        d.submissionId ?? (d.member ? crypto.randomUUID() : '');
+      setMember(d.member ?? null);
+      setValues(d.values ?? { ...EMPTY_AMOUNTS });
+      setEntryNote(d.entryNote ?? '');
+      setAccountTypes(d.accountTypes ?? {});
+      setOtherAccountId(d.otherAccountId ?? '');
+      setNoteDraft(d.noteDraft ?? '');
+    }
+  }, [localReady, user?.uid]);
+  useEffect(() => {
+    if (!localReady || !user || draftLoaded.current !== user.uid) return;
+    const submissionId = pendingId.current;
+    const timer = setTimeout(() => {
+      void changeLocal((s) => {
+        if (
+          submissionId &&
+          (s.commands.some((p) => p.command.id === submissionId) ||
+            s.receipts[submissionId])
+        )
+          return;
+        s.drafts = {
+          ...s.drafts,
+          collection: {
+            submissionId,
+            member,
+            values,
+            entryNote,
+            accountTypes,
+            otherAccountId,
+            noteDraft,
+          },
+        };
+      }).catch((e) => setError(message(e)));
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [
+    localReady,
+    user?.uid,
+    member,
+    values,
+    entryNote,
+    accountTypes,
+    otherAccountId,
+    noteDraft,
+  ]);
   const depositRef = useRef<HTMLInputElement>(null);
   const mutation = useRef(false);
   const allowUnload = useRef(false);
   useEffect(() => {
-    if (member && !uncertain) depositRef.current?.focus();
-  }, [member?.memberId]);
+    if (member && !uncertain) {
+      if (otherAccountId)
+        document.getElementById('deposit-account-type')?.focus();
+      else depositRef.current?.focus();
+    }
+  }, [member?.memberId, otherAccountId]);
   function protect(
     run: () => void,
     title = 'Discard this entry?',
-    body = 'These amounts have not been saved. Stay to finish the entry, or discard them.',
+    body = 'Your changes have not been saved. Stay to finish, or discard them.',
     label = 'Discard entry',
   ) {
     if (busy || uncertain) {
@@ -139,11 +232,26 @@ export default function App({ route: initialRoute }: { route: string }) {
     if (dirty) setGuard({ title, body, label, run });
     else run();
   }
+  const routeViews = useRef(
+    new Map<
+      string,
+      {
+        q: string;
+        type: string;
+        status: string;
+        agent: string;
+        agentLabel: string;
+        historyDay: string;
+        scroll: number;
+      }
+    >(),
+  );
   function navigateTo(path: string, replace = false) {
     const routes: Record<string, string> = {
       '/agent/': 'agent',
       '/agent/recent/': 'recent',
       '/agent/history/': 'history',
+      '/agent/notes/': 'notes',
       '/viewer/': 'viewer',
       '/admin/': 'admin',
       '/login/': 'login',
@@ -153,20 +261,43 @@ export default function App({ route: initialRoute }: { route: string }) {
       window.location.assign(path);
       return;
     }
+    routeViews.current.set(route, {
+      q,
+      type,
+      status,
+      agent,
+      agentLabel,
+      historyDay,
+      scroll: window.scrollY,
+    });
+    const remembered = routeViews.current.get(next);
     window.history[replace ? 'replaceState' : 'pushState'](null, '', path);
     setRoute(next);
-    setQ('');
-    setType('all');
-    setStatus(next === 'viewer' ? 'unrecorded' : 'all');
-    setHistoryDay('');
+    setQ(remembered?.q ?? '');
+    setType(remembered?.type ?? 'all');
+    setStatus(remembered?.status ?? (next === 'viewer' ? 'unrecorded' : 'all'));
+    setAgent(remembered?.agent ?? 'all');
+    setAgentLabel(remembered?.agentLabel ?? '');
+    setHistoryDay(remembered?.historyDay ?? '');
     setError('');
     setModal(null);
+    setEntryNote('');
+    setNoteDraft('');
+    void changeLocal((s) => {
+      if (s.drafts) {
+        delete s.drafts.noteComposer;
+        delete s.drafts.noteEdit;
+      }
+    }).catch(() => {});
+    setNoteExtraDirty(false);
+    setAccountTypes({});
+    setOtherAccountId('');
     if (next !== 'agent') {
       setMember(null);
       setValues({ ...EMPTY_AMOUNTS });
     }
-    document.title = `${next === 'recent' ? 'Recent entries' : next === 'history' ? 'Session history' : 'LCT Collect'} · LCT Collect`;
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    document.title = `${next === 'recent' ? 'Recent entries' : next === 'history' ? 'Session history' : next === 'notes' ? 'Notes' : 'LCT Collect'} · LCT Collect`;
+    window.scrollTo({ top: remembered?.scroll ?? 0, behavior: 'instant' });
     requestAnimationFrame(() =>
       document.getElementById('main-content')?.focus({ preventScroll: true }),
     );
@@ -204,6 +335,7 @@ export default function App({ route: initialRoute }: { route: string }) {
           '/agent/',
           '/agent/recent/',
           '/agent/history/',
+          '/agent/notes/',
           '/viewer/',
           '/admin/',
           '/login/',
@@ -220,6 +352,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         agent: '/agent/',
         recent: '/agent/recent/',
         history: '/agent/history/',
+        notes: '/agent/notes/',
         viewer: '/viewer/',
         admin: '/admin/',
         login: '/login/',
@@ -253,64 +386,145 @@ export default function App({ route: initialRoute }: { route: string }) {
     }, 6000);
     return () => clearTimeout(timer);
   }, [notice]);
-  const authorized = !!user && !!profile?.active;
+  const authorized = !!user && !!profile?.active && localReady;
   useEffect(
     () =>
       onAuthStateChanged(auth, (u) => {
+        routeViews.current.clear();
+        setMember(null);
+        setValues({ ...EMPTY_AMOUNTS });
+        setEntryNote('');
+        setNoteDraft('');
+        setAccountTypes({});
+        setOtherAccountId('');
+        setReceipt(null);
+        setModal(null);
+        setSelectedRow(null);
+        setQ('');
+        setMemberQuery('');
+        setUncertain(false);
+        pendingId.current = '';
+        draftLoaded.current = '';
         setUser(u);
         setProfile(null);
+        setLocalReady(false);
+        closeLocal();
         setProfileError('');
         setAuthReady(true);
       }),
     [],
   );
   useEffect(() => {
-    if (authReady && !user && route !== 'login')
-      window.location.replace('/login/');
+    if (authReady && !user && route !== 'login') {
+      const noteId = new URLSearchParams(location.search).get('note');
+      if (route === 'notes' && noteId && /^[A-Za-z0-9_-]{8,100}$/.test(noteId))
+        storage.set('session', 'lct-note-destination', noteId);
+      history.replaceState(null, '', '/login/');
+      setRoute('login');
+    }
   }, [authReady, user, route]);
   useEffect(() => {
     if (!user) return;
-    return onSnapshot(
-      doc(db(), 'users', user.uid),
-      (snap) => {
-        if (!snap.exists()) {
-          setProfile(null);
-          setProfileError(
-            'Your login has no application profile yet. Ask the owner to finish account setup.',
-          );
-          return;
-        }
-        const p = snap.data() as Profile;
-        if (!['agent', 'viewer', 'admin'].includes(p.role) || !p.active) {
-          setProfile(null);
-          setProfileError(
-            'Your account is inactive or has no assigned role. Contact the owner.',
-          );
-          return;
-        }
-        setProfile(p);
-        const allowed =
-          p.role === 'agent'
-            ? ['agent', 'recent', 'history']
-            : p.role === 'viewer'
-              ? ['viewer']
-              : ['admin'];
-        if (!allowed.includes(route)) {
-          // Complete sign-in without destroying an in-memory Auth session.
-          if (route === 'login') {
-            window.history.replaceState(null, '', HOME[p.role]);
-            setRoute(p.role);
-            setStatus(p.role === 'viewer' ? 'unrecorded' : 'all');
-            document.title = 'LCT Collect';
-          } else window.location.replace(HOME[p.role]);
-        }
-      },
-      (e) => {
+    const timeout = setTimeout(() => {
+      if (!localState().records[`users/${user.uid}`])
+        setProfileError(
+          'Connect to load your access. Your saved work remains on this device.',
+        );
+    }, 10000);
+    let cancelled = false,
+      stop: (() => void) | undefined;
+    const apply = (p: Profile) => {
+      if (cancelled) return;
+      if (!p.active || !['agent', 'viewer', 'admin'].includes(p.role)) {
         setProfile(null);
-        setProfileError(message(e));
-      },
-    );
+        setProfileError(
+          'Your account is inactive or has no assigned role. Contact the owner.',
+        );
+        return;
+      }
+      const allowed =
+        p.role === 'agent'
+          ? ['agent', 'recent', 'history', 'notes']
+          : p.role === 'viewer'
+            ? ['viewer']
+            : ['admin'];
+      const pathRoute =
+        (
+          {
+            '/agent/': 'agent',
+            '/agent/recent/': 'recent',
+            '/agent/history/': 'history',
+            '/agent/notes/': 'notes',
+            '/viewer/': 'viewer',
+            '/admin/': 'admin',
+            '/login/': 'login',
+          } as Record<string, string>
+        )[location.pathname] ?? 'index';
+      if (!allowed.includes(pathRoute)) {
+        const destination = storage.get('session', 'lct-note-destination');
+        storage.remove('session', 'lct-note-destination');
+        const noteId =
+          p.role === 'agent' &&
+          destination &&
+          /^[A-Za-z0-9_-]{8,100}$/.test(destination)
+            ? destination
+            : null;
+        const target = noteId ? `/agent/notes/?note=${noteId}` : HOME[p.role];
+        history.replaceState(null, '', target);
+        setRoute(noteId ? 'notes' : p.role);
+        setStatus(p.role === 'viewer' ? 'unrecorded' : 'all');
+      }
+      setProfileError('');
+      setProfile(p);
+    };
+    void openLocal(user.uid, String(auth.app.options.projectId))
+      .then(() => {
+        if (cancelled) return;
+        const cached = localState().records[`users/${user.uid}`];
+        if (cached) apply(cached);
+        setLocalReady(true);
+        stop = onSnapshot(
+          doc(db(), 'users', user.uid),
+          { includeMetadataChanges: true },
+          (snap) => {
+            if (cancelled || snap.metadata.fromCache) return;
+            if (!snap.exists()) {
+              void changeLocal((s) => {
+                delete s.records[`users/${user.uid}`];
+              }).catch(() => {});
+              setProfile(null);
+              setProfileError(
+                'Your login has no application profile. Contact the owner.',
+              );
+              return;
+            }
+            const p = snap.data() as Profile;
+            apply(p);
+            void changeLocal((s) => {
+              s.records[`users/${user.uid}`] = p;
+            }).catch((e) => setError(message(e)));
+          },
+          (e) => {
+            if (!cancelled) {
+              setProfile(null);
+              setProfileError(message(e));
+            }
+          },
+        );
+      })
+      .catch((e) => {
+        if (!cancelled) setProfileError(message(e));
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      stop?.();
+    };
   }, [user?.uid]);
+  useEffect(() => {
+    if (!localReady || !profile?.active) return;
+    return startSync();
+  }, [localReady, user?.uid, profile?.active, profile?.role]);
   useEffect(() => {
     const update = () => {
       setNetwork(navigator.onLine);
@@ -339,11 +553,49 @@ export default function App({ route: initialRoute }: { route: string }) {
   const isAgent = profile?.role === 'agent',
     isViewer = profile?.role === 'viewer',
     isAdmin = profile?.role === 'admin';
+  useEffect(() => {
+    if (!user || !isAgent) return;
+    const refresh = () => void restoreReminders(user.uid).catch(() => {});
+    refresh();
+    window.addEventListener('focus', refresh);
+    const timer = window.setInterval(refresh, 24 * 3600000);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.clearInterval(timer);
+    };
+  }, [user?.uid, isAgent]);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const receive = (event: MessageEvent) => {
+      if (event.data?.type !== 'OPEN_REMINDER') return;
+      const url = new URL(event.data.path, location.origin);
+      const noteId = url.searchParams.get('note');
+      if (
+        url.origin !== location.origin ||
+        url.pathname !== '/agent/notes/' ||
+        !noteId ||
+        !/^[A-Za-z0-9_-]{8,100}$/.test(noteId)
+      )
+        return;
+      protect(() => {
+        navigateTo('/agent/notes/');
+        history.replaceState(null, '', url.pathname + url.search);
+        window.dispatchEvent(
+          new CustomEvent('open-reminder', { detail: noteId }),
+        );
+      });
+    };
+    navigator.serviceWorker.addEventListener('message', receive);
+    return () =>
+      navigator.serviceWorker.removeEventListener('message', receive);
+  }, [dirty, busy, uncertain, route]);
+  useOfflinePreparation(user?.uid ?? '', authorized && isAgent);
   const members = useRecords<Member>(
     'members',
     isAdmin ? [] : [where('active', '==', true)],
     `${user?.uid}/${profile?.role}`,
     authorized && (isAgent || isAdmin),
+    { matches: (m) => isAdmin || m.active },
   );
   const sessions = useRecords<Session>(
     'sessions',
@@ -357,6 +609,15 @@ export default function App({ route: initialRoute }: { route: string }) {
     ],
     `${user?.uid}/${isViewer ? date : route === 'history' ? 'latest-five' : 'current'}/${today}`,
     authorized && (isAgent || isViewer),
+    {
+      matches: (s) =>
+        isViewer
+          ? s.workday === date
+          : s.agentId === user?.uid &&
+            (route === 'history' || s.workday === today),
+      compare: (a, b) => b.workday.localeCompare(a.workday),
+      limit: route === 'history' ? 5 : undefined,
+    },
   );
   const entryDay = route === 'history' ? historyDay : isViewer ? date : today;
   const showingEntries =
@@ -364,46 +625,40 @@ export default function App({ route: initialRoute }: { route: string }) {
     (isAgent && (route === 'recent' || (route === 'history' && !!historyDay)));
   const entries = usePagedEntries(
     entryDay,
-    `${user?.uid}/${profile?.role}/${route}`,
+    `${user?.uid}/${profile?.role}`,
     authorized && showingEntries,
     isAgent ? user?.uid : undefined,
   );
   const searchPages = usePagination(
-    groupAccounts(members.data, memberQuery, true),
+    useMemo(
+      () => groupAccounts(members.data, memberQuery, true),
+      [members.data, memberQuery],
+    ),
     memberQuery,
   );
-  const session = sessions.data.find((s) => s.workday === today);
-  const cached = isAdmin
-    ? members.cached
-    : isViewer
-      ? entries.cached || sessions.cached
-      : members.cached || sessions.cached || (showingEntries && entries.cached);
-  const waitingForData = !!(
-    authorized &&
-    (isAgent || isAdmin) &&
-    network &&
-    cached &&
-    !(members.error || sessions.error || entries.error)
+  const session = sessions.data.find(
+    (s) => s.workday === today && s.agentId === user?.uid,
   );
-  const waitKey = `${user?.uid}/${route}/${entryDay}`;
-  useEffect(() => {
-    setConnectionWaited(false);
-    if (!waitingForData) return;
-    const timer = window.setTimeout(() => setConnectionWaited(true), 8000);
-    return () => window.clearTimeout(timer);
-  }, [waitKey, waitingForData]);
-  const loadingData = waitingForData && !connectionWaited;
-  const writable = network && !cached && !busy;
-  useEffect(() => {
-    if (!cached)
-      setLastSync(
-        new Intl.DateTimeFormat('en-UG', {
-          hour: '2-digit',
-          minute: '2-digit',
-          timeZone: 'Africa/Kampala',
-        }).format(new Date()),
-      );
-  }, [cached, members.data, entries.data, sessions.data]);
+  const notes = usePagedNotes(
+    user?.uid ?? '',
+    authorized && isAgent && route === 'notes',
+  );
+  const cached =
+    route === 'notes'
+      ? notes.cached
+      : isAdmin
+        ? members.cached
+        : isViewer
+          ? entries.cached || sessions.cached
+          : members.cached ||
+            sessions.cached ||
+            (showingEntries && entries.cached);
+  const loadingData = false;
+  const writable =
+    authorized &&
+    durableStorageAvailable() &&
+    !busy &&
+    (!isAdmin || (network && !members.cached));
   async function action(fn: () => Promise<unknown>, success: string) {
     if (mutation.current) return;
     mutation.current = true;
@@ -422,13 +677,25 @@ export default function App({ route: initialRoute }: { route: string }) {
       setBusy(false);
     }
   }
-  async function signOutNow() {
+  async function signOutNow(preservePending = false) {
+    if (!preservePending && localState().commands.length) {
+      setGuard({
+        title: 'Sign out with unsynced work?',
+        body: 'Your changes have not reached the office. You can stay to sync or export a recovery copy. Signing out will keep this work on this device for your next sign-in.',
+        label: 'Sign out and keep work',
+        run: () => void signOutNow(true),
+      });
+      return;
+    }
+
     allowUnload.current = true;
-    setProfile(null);
     setBusy(true);
     try {
-      await logout();
+      await logout(preservePending);
+      setBusy(false);
+      allowUnload.current = false;
     } catch (e) {
+      allowUnload.current = false;
       setError(message(e));
       setBusy(false);
     }
@@ -444,6 +711,13 @@ export default function App({ route: initialRoute }: { route: string }) {
       for (const t of TYPES) {
         try {
           parsed[t] = amount(values[t], true);
+          if (
+            otherAccountId &&
+            t !== 'loanInstalment' &&
+            parsed[t] > 0 &&
+            !accountTypes[t]
+          )
+            errors[t] = 'Choose Fixed or Saving.';
         } catch (e) {
           errors[t] = message(e);
         }
@@ -451,7 +725,16 @@ export default function App({ route: initialRoute }: { route: string }) {
       setFieldErrors(errors);
       const invalid = TYPES.find((t) => errors[t]);
       if (invalid) {
-        document.getElementById(invalid)?.focus();
+        document
+          .getElementById(
+            otherAccountId &&
+              invalid !== 'loanInstalment' &&
+              parsed[invalid] > 0 &&
+              !accountTypes[invalid]
+              ? `${invalid}-account-type`
+              : invalid,
+          )
+          ?.focus();
         return;
       }
       if (!TYPES.some((t) => parsed[t] > 0))
@@ -472,9 +755,30 @@ export default function App({ route: initialRoute }: { route: string }) {
       setError(message(e));
     }
   }
+  function selectGroup(group: MemberGroup) {
+    const run = () => {
+      setValues({ ...EMPTY_AMOUNTS });
+      setFieldErrors({});
+      setEntryNote('');
+      setAccountTypes({});
+      pendingId.current = crypto.randomUUID();
+      setOtherAccountId(group.accounts[1]?.memberId ?? '');
+      setMember(group.accounts[0]);
+      setMemberQuery('');
+    };
+    protect(
+      run,
+      'Change member?',
+      'Changing members discards the unsaved entry.',
+      'Discard & change member',
+    );
+  }
   function clearForm() {
     if (user) storage.remove('session', `lct-pending-${user.uid}`);
     setMember(null);
+    setOtherAccountId('');
+    setAccountTypes({});
+    setEntryNote('');
     setMemberQuery('');
     setValues({ ...EMPTY_AMOUNTS });
     setFieldErrors({});
@@ -492,12 +796,6 @@ export default function App({ route: initialRoute }: { route: string }) {
       );
       return;
     }
-    if (!storage.set('session', `lct-pending-${user.uid}`, pendingId.current)) {
-      setError(
-        'This browser cannot retain a save reference. Enable site storage before saving money, then review again.',
-      );
-      return;
-    }
     mutation.current = true;
     setBusy(true);
     setError('');
@@ -509,6 +807,11 @@ export default function App({ route: initialRoute }: { route: string }) {
         reviewValues,
         user.uid,
         profile,
+        {
+          otherAccountId: otherAccountId || undefined,
+          accountTypes,
+          note: entryNote,
+        },
       );
       storage.remove('session', `lct-pending-${user.uid}`);
       setUncertain(false);
@@ -518,14 +821,22 @@ export default function App({ route: initialRoute }: { route: string }) {
       const savedLines = Object.fromEntries(
         TYPES.filter((t) => reviewValues[t] > 0).map((t) => [
           t,
-          { amount: reviewValues[t], state: 'active', recorded: false },
+          {
+            amount: reviewValues[t],
+            state: 'active',
+            recorded: false,
+            ...(otherAccountId && t !== 'loanInstalment'
+              ? { accountType: accountTypes[t] }
+              : {}),
+          },
         ]),
       );
       setReceipt({
         entryId: savedId,
         memberId: member.memberId,
         memberNameSnapshot: member.fullName,
-        accountNumberSnapshot: member.accountNumber,
+        accountNumberSnapshot: otherAccountId ? '' : member.accountNumber,
+        ...(otherAccountId ? { accountSelection: 'type' as const } : {}),
         ...(member.uniqueNumber
           ? { uniqueNumberSnapshot: member.uniqueNumber }
           : {}),
@@ -535,11 +846,8 @@ export default function App({ route: initialRoute }: { route: string }) {
       });
       setNotice('');
     } catch (e) {
-      setUncertain(true);
-      setModal(null);
-      setError(
-        `Save not confirmed. Check its status before retrying. ${message(e)}`,
-      );
+      storage.remove('session', `lct-pending-${user.uid}`);
+      setError(message(e));
     } finally {
       mutation.current = false;
       setBusy(false);
@@ -682,12 +990,23 @@ export default function App({ route: initialRoute }: { route: string }) {
         hasNext={entries.hasNext}
         onPrevious={entries.previous}
         onNext={entries.next}
-        busy={busy || entries.loading}
+        busy={busy || entries.loading || loadingData}
       />
     );
   }
   function rowsView(rows: Row[], viewer = false) {
-    if (entries.loading) return <p className="empty">Loading entries…</p>;
+    if (entries.loading)
+      return (
+        <p className="empty" role="status">
+          Loading entries…
+        </p>
+      );
+    if (entries.unavailable)
+      return (
+        <p className="empty">
+          This workday has not been downloaded. Connect to load its entries.
+        </p>
+      );
     if (!rows.length)
       return (
         <div className="empty" id="entry-results" tabIndex={-1}>
@@ -714,7 +1033,7 @@ export default function App({ route: initialRoute }: { route: string }) {
       >
         {viewer && (
           <div className="register-head">
-            <span>Member account</span>
+            <span>Member / account</span>
             <span>Type / agent</span>
             <span>Amount</span>
             <span>Status</span>
@@ -728,11 +1047,17 @@ export default function App({ route: initialRoute }: { route: string }) {
           >
             <button
               className="entry-identity"
-              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, account ${row.entry.accountNumberSnapshot}`}
+              aria-label={`View ${row.entry.memberNameSnapshot}, ${LABELS[row.type]}, ${entryAccountLabel(row.entry, row.line, row.type)}`}
               onClick={() => showLine(row)}
             >
               <strong>{row.entry.memberNameSnapshot}</strong>
-              <span>{row.entry.accountNumberSnapshot}</span>
+              <span>
+                {row.entry.uniqueNumberSnapshot
+                  ? `${row.entry.uniqueNumberSnapshot} · `
+                  : ''}
+                {entryAccountLabel(row.entry, row.line, row.type)}
+                {row.entry.note && ' · Note'}
+              </span>
               <span>
                 {timeLabel(row.entry.createdAt)} <Status row={row} />
               </span>
@@ -802,43 +1127,34 @@ export default function App({ route: initialRoute }: { route: string }) {
       </div>
     );
   }
-  if (!authReady)
+  if (!authReady || (user && !profile && !profileError && route !== 'login'))
     return (
       <div className="boot-shell">
-        <header className="app-header" inert={loadingData}>
-          <div className="header-inner">
-            <div className="brand">
-              <Brand />
-            </div>
-          </div>
+        <header className="app-header">
+          <Brand />
         </header>
-        <p className="loading" role="status">
-          Opening your notebook…
-        </p>
+        <main id="main-content" aria-busy="true">
+          <div className="page">
+            <p role="status">Opening your notebook…</p>
+          </div>
+        </main>
       </div>
     );
-  if (!user)
-    return (
-      <Suspense fallback={<p role="status">Loading sign in…</p>}>
-        <Login notice={profileError} />
-      </Suspense>
-    );
+  if (!user || (!profile && route === 'login'))
+    return <Login notice={profileError} pending={!!user && !profileError} />;
   if (!profile)
     return (
-      <main tabIndex={-1} id="main-content" className="login-shell">
-        <h1>LCT Collect</h1>
-        <p role="status">{profileError || 'Loading your access…'}</p>
-        <button
-          className="button"
-          disabled={busy}
-          onClick={() => protect(() => void signOutNow())}
-        >
+      <main id="main-content" className="login-shell">
+        <h1>Access unavailable</h1>
+        <p role="alert">{profileError}</p>
+        <button className="button" onClick={() => void signOutNow()}>
           Sign out
         </button>
       </main>
     );
   const headerDay = isViewer ? date : historyDay || today;
-  const queryError = members.error || sessions.error || entries.error;
+  const queryError =
+    members.error || sessions.error || entries.error || notes.error;
   return (
     <>
       <header className="app-header" inert={loadingData}>
@@ -853,25 +1169,23 @@ export default function App({ route: initialRoute }: { route: string }) {
             {isAgent ? (
               <>
                 <a
-                  aria-current={route === 'recent' ? 'page' : undefined}
-                  className={route === 'recent' ? 'active' : ''}
-                  href="/agent/recent/"
+                  aria-current={route === 'notes' ? 'page' : undefined}
+                  className={route === 'notes' ? 'active' : ''}
+                  href="/agent/notes/"
                 >
-                  <Icon name="list-ul" />
-                  <span>Recent entries</span>
-                </a>
-                <a
-                  aria-current={route === 'history' ? 'page' : undefined}
-                  className={route === 'history' ? 'active' : ''}
-                  href="/agent/history/"
-                >
-                  <Icon name="clock-history" />
-                  <span>History</span>
+                  <Icon name="note" />
+                  <span>Notes</span>
                 </a>
               </>
             ) : isAdmin ? (
               <div id="owner-header-actions" />
             ) : null}
+            <HeaderMenu
+              agent={isAgent}
+              route={route}
+              busy={busy}
+              onSignOut={() => protect(() => void signOutNow())}
+            />
           </nav>
         </div>
       </header>
@@ -882,7 +1196,9 @@ export default function App({ route: initialRoute }: { route: string }) {
         id="main-content"
         className={`${isViewer || isAdmin ? 'page wide' : 'page'} ${route}-page`}
       >
-        {(memoryOnlySession || !recordCacheAvailable) && (
+        {(memoryOnlySession ||
+          !recordCacheAvailable ||
+          !durableStorageAvailable()) && (
           <p className="alert" role="status">
             Site storage is limited. Offline viewing is limited to this open
             page.
@@ -890,27 +1206,17 @@ export default function App({ route: initialRoute }: { route: string }) {
               ' Sign-in lasts while this page is open. Enable site storage to save collection entries.'}
           </p>
         )}
-        {(cached || !network) && !loadingData && (
-          <div
-            className={
-              isAgent || isAdmin
-                ? 'connection compact-connection'
-                : 'connection'
-            }
-            role="status"
-          >
+        {!network && (
+          <div className="connection compact-connection" role="status">
             <Icon name="wifi-off" />
             <span>
-              {isAgent || isAdmin
-                ? !network
-                  ? 'You’re offline · saved data may be outdated.'
-                  : 'Can’t connect · saved data may be outdated.'
-                : !network
-                  ? 'Offline — viewing saved records. Connect to make changes.'
-                  : 'Connecting — showing saved records; results may be incomplete.'}
+              {!network
+                ? 'You’re offline · saved data may be outdated.'
+                : 'Can’t connect · saved data may be outdated.'}
             </span>
           </div>
         )}
+        <SyncQueue />
         {error && (
           <div className="alert error" role="alert">
             {error}
@@ -964,13 +1270,19 @@ export default function App({ route: initialRoute }: { route: string }) {
           >
             <Icon name="check2" />
             <div>
-              <strong>Saved · {receipt.memberNameSnapshot}</strong>
+              <strong>
+                Saved on this device · {receipt.memberNameSnapshot}
+              </strong>
+              <SyncState entryId={receipt.entryId} />
               <span>
-                Account {receipt.accountNumberSnapshot} ·{' '}
+                {receipt.accountSelection === 'type'
+                  ? receipt.uniqueNumberSnapshot
+                  : `Account ${receipt.accountNumberSnapshot}`}{' '}
+                ·{' '}
                 {TYPES.filter((t) => receipt.lines[t])
                   .map(
                     (t) =>
-                      `${LABELS[t]} UGX ${money(receipt.lines[t]!.amount)}`,
+                      `${LABELS[t]}${receipt.lines[t]!.accountType ? ` (${ACCOUNT_TYPES[receipt.lines[t]!.accountType!]})` : ''} UGX ${money(receipt.lines[t]!.amount)}`,
                   )
                   .join(' · ')}
               </span>
@@ -1002,7 +1314,12 @@ export default function App({ route: initialRoute }: { route: string }) {
         )}
         {isAgent && route === 'agent' && (
           <>
-            {sessions.loading ? (
+            {sessions.unavailable && isViewer ? (
+              <p className="empty">
+                Session data is unavailable on this device. Connect to prepare
+                it before starting a session.
+              </p>
+            ) : sessions.loading ? (
               <p className="empty">Loading your session…</p>
             ) : !session ? (
               <section className="card start-card">
@@ -1046,21 +1363,6 @@ export default function App({ route: initialRoute }: { route: string }) {
               </section>
             ) : (
               <>
-                <section
-                  className="cash-summary"
-                  aria-label="Expected physical cash"
-                >
-                  <h1>Expected cash</h1>
-                  <div className="cash-number">
-                    <span>UGX</span>{' '}
-                    <strong>{money(session.expectedCash)}</strong>
-                  </div>
-                  <p>
-                    {cached
-                      ? 'Saved cash estimate'
-                      : `Up to date${lastSync ? ' · ' + lastSync : ''}`}
-                  </p>
-                </section>
                 <section className="card find-card">
                   <h2>Find member</h2>
                   <SearchField
@@ -1076,9 +1378,16 @@ export default function App({ route: initialRoute }: { route: string }) {
                         groups={searchPages.items}
                         searching
                         disabled={uncertain || busy}
+                        onSelectGroup={selectGroup}
                         onSelect={(m) => {
                           const select = () => {
-                            if (member?.memberId !== m.memberId) {
+                            if (
+                              member?.memberId !== m.memberId ||
+                              otherAccountId
+                            ) {
+                              setOtherAccountId('');
+                              setAccountTypes({});
+                              setEntryNote('');
                               setValues({ ...EMPTY_AMOUNTS });
                               setFieldErrors({});
                               pendingId.current = '';
@@ -1086,7 +1395,10 @@ export default function App({ route: initialRoute }: { route: string }) {
                             setMember(m);
                             setMemberQuery('');
                           };
-                          if (member?.memberId === m.memberId) {
+                          if (
+                            member?.memberId === m.memberId &&
+                            !otherAccountId
+                          ) {
                             setMemberQuery('');
                             depositRef.current?.focus();
                           } else
@@ -1125,7 +1437,16 @@ export default function App({ route: initialRoute }: { route: string }) {
                   {member ? (
                     <Account
                       name={member.fullName}
-                      number={member.accountNumber}
+                      number={otherAccountId ? '' : member.accountNumber}
+                      accountCount={
+                        otherAccountId
+                          ? groupAccounts(members.data).find((g) =>
+                              g.accounts.some(
+                                (a) => a.memberId === member.memberId,
+                              ),
+                            )?.accounts.length
+                          : undefined
+                      }
                       memberNumber={member.uniqueNumber}
                     />
                   ) : (
@@ -1140,6 +1461,12 @@ export default function App({ route: initialRoute }: { route: string }) {
                       review();
                     }}
                   >
+                    <p className="amount-currency muted">
+                      Amounts in UGX
+                      {otherAccountId
+                        ? ' · choose an account type per amount'
+                        : ''}
+                    </p>
                     {TYPES.map((t) => (
                       <div className="amount-row" key={t}>
                         <label htmlFor={t}>
@@ -1153,7 +1480,36 @@ export default function App({ route: initialRoute }: { route: string }) {
                           </span>
                         </label>
                         <div className="currency-input">
-                          <span>UGX</span>
+                          {t === 'loanInstalment' ? (
+                            <span>UGX</span>
+                          ) : (
+                            <select
+                              id={`${t}-account-type`}
+                              aria-invalid={!!fieldErrors[t]}
+                              aria-describedby={
+                                fieldErrors[t] ? `${t}-error` : undefined
+                              }
+                              aria-label={`${LABELS[t]} account type`}
+                              value={accountTypes[t] ?? ''}
+                              disabled={!otherAccountId || busy || uncertain}
+                              onChange={(e) => {
+                                if (!e.target.value)
+                                  setValues((v) => ({ ...v, [t]: '' }));
+                                setAccountTypes((v) => ({
+                                  ...v,
+                                  [t]: e.target.value as AccountType,
+                                }));
+                                setFieldErrors((v) => ({
+                                  ...v,
+                                  [t]: undefined,
+                                }));
+                              }}
+                            >
+                              <option value="">Account type</option>
+                              <option value="fixed">Fixed</option>
+                              <option value="saving">Saving</option>
+                            </select>
+                          )}
                           <input
                             id={t}
                             ref={t === 'deposit' ? depositRef : undefined}
@@ -1167,7 +1523,14 @@ export default function App({ route: initialRoute }: { route: string }) {
                             autoComplete="off"
                             aria-label={`${LABELS[t]} in UGX`}
                             placeholder="0"
-                            disabled={!member || busy || uncertain}
+                            disabled={
+                              !member ||
+                              busy ||
+                              uncertain ||
+                              (!!otherAccountId &&
+                                t !== 'loanInstalment' &&
+                                !accountTypes[t])
+                            }
                             value={values[t]}
                             onChange={(e) => {
                               const text = e.currentTarget.value;
@@ -1205,6 +1568,18 @@ export default function App({ route: initialRoute }: { route: string }) {
                         )}
                       </div>
                     ))}
+                    <label className="entry-note" htmlFor="entry-note">
+                      Notes <span className="muted">Optional</span>
+                      <textarea
+                        id="entry-note"
+                        maxLength={2000}
+                        rows={2}
+                        placeholder="Anything to note about this collection"
+                        value={entryNote}
+                        disabled={!member || busy || uncertain}
+                        onChange={(e) => setEntryNote(e.target.value)}
+                      />
+                    </label>
                     <div className="actions">
                       <button
                         type="button"
@@ -1223,9 +1598,36 @@ export default function App({ route: initialRoute }: { route: string }) {
                     </div>
                   </form>
                 </section>
+                <section
+                  className="cash-summary"
+                  aria-label="Expected physical cash"
+                >
+                  <h1>Expected cash</h1>
+                  <div className="cash-number">
+                    <span>UGX</span>{' '}
+                    <strong>{money(session.expectedCash)}</strong>
+                  </div>
+                  <SyncState sessionId={session.sessionId} />
+                </section>
               </>
             )}
           </>
+        )}
+        {isAgent && route === 'notes' && (
+          <Notes
+            uid={user.uid}
+            error={error}
+            notes={notes}
+            clearError={() => setError('')}
+            members={members.data}
+            onDirty={setNoteExtraDirty}
+            protect={protect}
+            draft={noteDraft}
+            onDraft={setNoteDraft}
+            writable={writable}
+            busy={busy}
+            action={action}
+          />
         )}
         {isAgent && route === 'recent' && (
           <>
@@ -1294,7 +1696,12 @@ export default function App({ route: initialRoute }: { route: string }) {
               </>
             ) : (
               <div className="session-list">
-                {sessions.loading ? (
+                {sessions.unavailable ? (
+                  <p className="empty">
+                    Session data is unavailable on this device. Connect to
+                    prepare it before starting a session.
+                  </p>
+                ) : sessions.loading ? (
                   <p role="status">Loading workdays…</p>
                 ) : !sessions.data.length ? (
                   <p className="empty">No saved workdays yet.</p>
@@ -1367,9 +1774,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               </label>
             </div>
             <details className="viewer-totals">
-              <summary>
-                Workday totals{sessions.cached ? ' · saved data' : ''}
-              </summary>
+              <summary>Workday totals</summary>
               <div className="totals">
                 {TYPES.map((t) => (
                   <div key={t}>
@@ -1420,24 +1825,6 @@ export default function App({ route: initialRoute }: { route: string }) {
             />
           </Suspense>
         )}
-        <footer>
-          <span>
-            {profile.role === 'admin'
-              ? 'Owner'
-              : profile.role === 'viewer'
-                ? 'Viewer'
-                : 'Agent'}{' '}
-            · {profile.username}
-          </span>
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={() => protect(() => void signOutNow())}
-          >
-            <Icon name="box-arrow-right" />
-            Sign out
-          </button>
-        </footer>
       </main>
       {guard && (
         <Modal title={guard.title} onClose={() => setGuard(null)}>
@@ -1448,7 +1835,7 @@ export default function App({ route: initialRoute }: { route: string }) {
               autoFocus
               onClick={() => setGuard(null)}
             >
-              Keep entry
+              {guard.label === 'Discard note' ? 'Keep writing' : 'Keep entry'}
             </button>
             <button
               className="button danger"
@@ -1463,12 +1850,12 @@ export default function App({ route: initialRoute }: { route: string }) {
           </div>
         </Modal>
       )}
-      {loadingData && <LoadingOverlay />}
+
       {modal === 'cash' && session && (
         <Modal title="Cash breakdown" onClose={() => setModal(null)}>
           <p>
             {dayLabel(today)}
-            {cached ? ' · Saved estimate' : ''}
+            {session && <SyncState sessionId={session.sessionId} />}
           </p>
           <dl className="review-lines">
             <div>
@@ -1498,7 +1885,14 @@ export default function App({ route: initialRoute }: { route: string }) {
         <Modal title="Review entry" onClose={() => !busy && setModal(null)}>
           <Account
             name={member.fullName}
-            number={member.accountNumber}
+            number={otherAccountId ? '' : member.accountNumber}
+            accountCount={
+              otherAccountId
+                ? groupAccounts(members.data).find((g) =>
+                    g.accounts.some((a) => a.memberId === member.memberId),
+                  )?.accounts.length
+                : undefined
+            }
             memberNumber={member.uniqueNumber}
           />
           {error && (
@@ -1506,10 +1900,21 @@ export default function App({ route: initialRoute }: { route: string }) {
               {error}
             </p>
           )}
+          {entryNote.trim() && (
+            <div className="entry-note-preview">
+              <strong>Note</strong>
+              <p className="note-body">{entryNote.trim()}</p>
+            </div>
+          )}
           <dl className="review-lines">
             {TYPES.filter((t) => reviewValues[t] > 0).map((t) => (
               <div key={t}>
-                <dt>{LABELS[t]}</dt>
+                <dt>
+                  {LABELS[t]}
+                  {otherAccountId && t !== 'loanInstalment' && accountTypes[t]
+                    ? ` · ${ACCOUNT_TYPES[accountTypes[t]!]}`
+                    : ''}
+                </dt>
                 <dd>UGX {money(reviewValues[t])}</dd>
               </div>
             ))}
@@ -1556,7 +1961,16 @@ export default function App({ route: initialRoute }: { route: string }) {
         >
           <Account
             name={detailRow.entry.memberNameSnapshot}
-            number={detailRow.entry.accountNumberSnapshot}
+            number={
+              detailRow.type === 'loanInstalment'
+                ? ''
+                : detailRow.entry.accountNumberSnapshot
+            }
+            accountType={entryAccountLabel(
+              detailRow.entry,
+              detailRow.line,
+              detailRow.type,
+            )}
             memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <p>
@@ -1605,13 +2019,28 @@ export default function App({ route: initialRoute }: { route: string }) {
         <Modal title="Entry details" onClose={() => !busy && setModal(null)}>
           <Account
             name={detailRow.entry.memberNameSnapshot}
-            number={detailRow.entry.accountNumberSnapshot}
+            number={
+              detailRow.type === 'loanInstalment'
+                ? ''
+                : detailRow.entry.accountNumberSnapshot
+            }
+            accountType={entryAccountLabel(
+              detailRow.entry,
+              detailRow.line,
+              detailRow.type,
+            )}
             memberNumber={detailRow.entry.uniqueNumberSnapshot}
           />
           <div className="detail-amount">
             {LABELS[detailRow.type]}
             <strong>UGX {money(detailRow.line.amount)}</strong>
           </div>
+          {detailRow.entry.note && (
+            <section className="entry-note-preview">
+              <strong>Note</strong>
+              <p className="note-body">{detailRow.entry.note}</p>
+            </section>
+          )}
           <Status row={detailRow} />
           <dl>
             <div>

@@ -6,7 +6,13 @@ import { message } from '../lib/errors';
 import { storage } from '../lib/storage';
 import Icon from './Icon';
 import Brand from './Brand';
-export default function Login({ notice }: { notice: string }) {
+export default function Login({
+  notice,
+  pending = false,
+}: {
+  notice: string;
+  pending?: boolean;
+}) {
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [show, setShow] = useState(false);
@@ -23,7 +29,7 @@ export default function Login({ notice }: { notice: string }) {
     <div className="login-page">
       <header className="login-brand">
         <Brand />
-        <p>Lusaze Community Traders SACCO</p>
+        <p>Lusaze Community Traders</p>
       </header>
       <main tabIndex={-1} id="main-content" className="login-shell">
         <h1>Welcome back</h1>
@@ -74,7 +80,7 @@ export default function Login({ notice }: { notice: string }) {
             <input
               id="login-username"
               name="username"
-              disabled={busy}
+              disabled={busy || pending}
               aria-invalid={fieldError?.field === 'username'}
               aria-describedby={
                 fieldError?.field === 'username' ? 'username-error' : undefined
@@ -101,7 +107,7 @@ export default function Login({ notice }: { notice: string }) {
               <input
                 id="login-password"
                 name="password"
-                disabled={busy}
+                disabled={busy || pending}
                 aria-invalid={fieldError?.field === 'password'}
                 aria-describedby={
                   fieldError?.field === 'password'
@@ -137,11 +143,15 @@ export default function Login({ notice }: { notice: string }) {
           </div>
           <p className="small-note">
             Records you view are automatically saved on this device for offline
-            viewing. Sign out to clear them. Sign-in lasts for this browser
-            session.
+            viewing. Sign out to clear them. Sign-in stays on this personal
+            device until you sign out.
           </p>
-          <button className="button full" disabled={busy} aria-busy={busy}>
-            {busy ? 'Signing in…' : 'Sign in'}
+          <button
+            className="button full"
+            disabled={busy || pending}
+            aria-busy={busy || pending}
+          >
+            {busy || pending ? 'Signing in…' : 'Sign in'}
             {busy ? (
               <span className="button-spinner" aria-hidden="true" />
             ) : (
