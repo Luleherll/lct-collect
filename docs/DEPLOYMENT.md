@@ -1,14 +1,14 @@
 # Deployment and automation
 
-Last updated: 1 November 2026 (Africa/Kampala). Feature details and backend provisioning: [REMINDERS.md](REMINDERS.md).
+Last updated: 7 November 2026 (Africa/Kampala). Feature details and backend provisioning: [REMINDERS.md](REMINDERS.md). Production setup and promotion: [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md).
 
 ## Current feature rollout
 
-PR [#5](https://github.com/Luleherll/lct-collect/pull/5), branch `codex/member-types-notes` targeting `develop`, contains account types, compact UI, private reminder notes and soft deletion. Its [preview](https://lct-collect-staging--pr-5-8nk9nf7e.web.app/agent/notes/) is separate from the permanent staging site. Current UI refinements move deletion to list-row trash icons and give the viewer the same connection overlay as agent/admin.
+`develop` contains the local-first daily workflow, private reminder notes, account types, the Notes agenda/bottom sheet, and reviewed recovery for rejected queue commands. PRs #6–#8 are merged. The permanent staging site is separate from expiring PR previews.
 
-Staging reminder APIs, rules and indexes are deployed, including soft deletion. Feature UI is published to the PR preview; permanent staging receives it through a reviewed merge to `develop`. Production reminder resources/configuration have not been provisioned. After permanent staging is updated, real Android push acceptance is required before production promotion. Preview origins intentionally cannot enrol push devices.
+Staging Functions, rules/indexes and Hosting deployed successfully from `ea693287016426131d5952e1a7066d537e0493a4` on 5 November 2026: [run 42028826667, attempt 2](https://github.com/Luleherll/lct-collect/actions/runs/42028826667/attempts/2). Live home/Notes pages, app scripts, worker and signed-ticket validation route were checked. Production requires its own verified setup before promotion. Preview origins intentionally cannot enrol push devices.
 
-The last complete verified CI before these UI refinements is [run 41302168343](https://github.com/Luleherll/lct-collect/actions/runs/41302168343): 33 browser scenarios, 33 unit tests, 53 rules tests, nine reminder API tests, Auth smoke, formatting, type checks and build. For the current source, use the [PR checks](https://github.com/Luleherll/lct-collect/pull/5/checks); verify its exact head SHA and preview release before merging.
+The staging release passed CI including 42 browser scenarios. For later changes, verify checks against the exact PR head SHA; earlier staging success does not verify later code or production provisioning.
 
 ## Current staging deployment
 
@@ -63,13 +63,13 @@ The provider checks `assertion.environment == 'staging'` directly, together with
 
 The workflow requests `id-token: write` only for its deployment job. Google authentication occurs after tests/build, just before deployment. It uses short-lived credentials instead of `FIREBASE_SERVICE_ACCOUNT`. The Hosting command uses `deploy --only hosting` for the staging project, so it updates the permanent staging URL. A live Hosting channel in the staging project does not deploy the separate production project.
 
-Staging checks every compiled function's explicit dedicated runtime and verifies
+Release workflows check every compiled function's explicit dedicated runtime and verify
 `iam.serviceAccounts.actAs` on that account before deploying Functions. Firebase
 CLI 15.34.1 incorrectly checks the unused App Engine default account first. Only
 the Functions deploy command sets `FIREBASE_SKIP_INFORMATIONAL_IAM=true` to avoid
 that informational check; the explicit runtime check fails on missing permission
 or an API error, and Firebase still enforces authorization during deployment.
-This does not grant access to the default account or change project roles.
+This does not grant access to the default account or change project roles. Production additionally runs the read-only deployment readiness check before rules deployment; missing runtime/build access, services or invocation policies stop the release.
 
 ## Activate staging auto-deploy
 
@@ -97,7 +97,7 @@ Provider:
 projects/275805072037/locations/global/workloadIdentityPools/lct-github-prod/providers/github
 ```
 
-This identity has the original Hosting/rules/index/service-usage roles confined to the production project. The reminder-specific roles and runtime resources still require production bootstrap; they are not inherited from staging. Its provider accepts only repository ID `1424838142`, owner ID `36928255`, the `production` environment, `refs/heads/main`, and the exact `deploy-production.yml` workflow for push/manual events. It cannot be used by the staging workflow. No private key was created.
+This identity was last observed with Hosting/rules/index/service-usage roles only. Production bootstrap and readiness must be verified independently using [PRODUCTION_RELEASE.md](PRODUCTION_RELEASE.md); staging grants are not inherited. Its provider accepts only repository ID `1424838142`, owner ID `36928255`, the `production` environment, `refs/heads/main`, and the exact `deploy-production.yml` workflow for push/manual events. It cannot be used by the staging workflow. No private key was created.
 
 After staging/pilot acceptance:
 

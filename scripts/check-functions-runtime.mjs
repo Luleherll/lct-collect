@@ -57,11 +57,11 @@ async function main() {
   );
   const account = validateRuntime(project, environment, functions);
   const require = createRequire(import.meta.url);
-  const { requireAuth } = require('firebase-tools/lib/requireAuth.js');
+  const { authenticate } = require('./firebase-deployment.cjs');
   const {
     testResourceIamPermissions,
   } = require('firebase-tools/lib/gcp/iam.js');
-  await requireAuth({ project, nonInteractive: true });
+  await authenticate(project);
   await checkPermission(project, account, testResourceIamPermissions);
   console.log(
     `Verified deployment access to Firebase Functions runtime ${account}.`,
