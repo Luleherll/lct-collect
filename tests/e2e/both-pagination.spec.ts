@@ -59,6 +59,9 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
       await page.getByLabel(label + ' in UGX', { exact: true }).fill(value);
     await page.getByLabel('Loan instalment in UGX', { exact: true }).fill('5');
     await page.getByLabel('Notes Optional').fill(marker);
+    const labels = page.locator('.split-amounts .currency-input > span');
+    await expect(labels).toHaveText(['Saving', 'Fixed', 'Saving', 'Fixed']);
+    for (let i = 0; i < 4; i++) await expect(labels.nth(i)).toBeVisible();
     await page.setViewportSize({ width: 320, height: 760 });
     expect(
       await page.evaluate(

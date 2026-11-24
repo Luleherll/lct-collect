@@ -3512,3 +3512,11 @@ dialog.bottom-sheet {
 .split-amounts .currency-input span {
   min-width: 78px;
 }
+
+.agent-page .amount-row .split-amounts .currency-input > span {
+  display: block;
+}
+.currency-input.split-selector select {
+  flex: 1;
+  width: auto;
+}

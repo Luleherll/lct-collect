@@ -1561,7 +1561,14 @@ export default function App({ route: initialRoute }: { route: string }) {
                                 : 'Amount received for loan repayment'}
                           </span>
                         </label>
-                        <div className="currency-input">
+                        <div
+                          className={
+                            'currency-input' +
+                            (accountTypes[t] === 'both'
+                              ? ' split-selector'
+                              : '')
+                          }
+                        >
                           {t === 'loanInstalment' ? (
                             <span>UGX</span>
                           ) : (
