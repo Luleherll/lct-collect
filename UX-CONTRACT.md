@@ -119,3 +119,37 @@ immutable reference. No client archive alters server void cutoffs or financial
 permissions. Business sources: docs/LOCAL_FIRST.md, functions/src/sync.ts and
 functions/src/protocol.ts. Regression evidence: tests/local-first.test.ts,
 tests/queue-review.test.ts, tests/sync-api.test.ts and tests/e2e/sync-recovery.spec.ts.
+
+## Both-account submissions and dynamic pagination (24 November 2026)
+
+The approved deposit/withdrawal selectors independently support Both, exposing
+Saving and Fixed amount fields. Both requires two positive whole-UGX amounts;
+the sum per transaction stays within MAX_AMOUNT. Inactive drafts survive mode
+switching but never contribute to review or saving. Clearing a selector clears
+its associated amounts. Draft restoration includes both mode and split values.
+
+One `entryPair` sync command in the existing session scope carries stable Saving
+and Fixed entry IDs, combined values and split amounts. Shared protocol expansion
+is used in optimistic projection, review recovery and backend validation. The
+server transaction validates both member references, both entry identities and
+the combined cash effect before creating either entry. Both records share a
+submissionGroupId and financial revision. Saving/Fixed deposits and withdrawals
+land in their respective entries; loan repayment lands in Saving once. Existing
+line-based recording, Undo and void rules apply independently. Idempotent retry,
+held snapshot reconciliation and rejection recovery cover both record paths.
+Historical entries and version-1 queued operations remain supported.
+
+Search/status/type/agent filtering now covers the whole selected workday before
+stable timestamp/document-ID/type ordering and 50-line pagination. Counts and
+page count reflect matching projected rows. Recording pulls subsequent matches
+forward; invalid final pages clamp, while valid current pages remain selected.
+Filter/day changes reset to page 1. Search/filter text remains in memory.
+
+Every paginated list uses the shared numbered Pagination control and direct page
+selection. Current pages expose aria-current=page; noninteractive ellipses bound
+long lists. Narrow layouts retain 44px number buttons without horizontal overflow.
+Only explicit navigation scrolls/focuses results. Background updates do not steal
+focus; a removed focused recording control yields focus to the next record or
+results heading. Existing offline completeness and unsynced-only status rules
+remain in force. Business sources: user-approved plan, shared protocol and sync
+backend. Evidence: paired-entry, sync-api and both-pagination regression tests.

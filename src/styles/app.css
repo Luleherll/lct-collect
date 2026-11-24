@@ -3458,3 +3458,65 @@ dialog.bottom-sheet {
 .anchored-results .muted {
   padding-inline: 8px;
 }
+
+/* Shared numbered navigation: the summary never crowds the page controls. */
+.pagination {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.pagination > .button:first-child {
+  grid-column: 1;
+  grid-row: 1;
+}
+.pagination > .button:last-child {
+  grid-column: 3;
+  grid-row: 1;
+}
+.page-numbers {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  grid-column: 2;
+  grid-row: 1;
+}
+.page-numbers .button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+}
+.page-numbers .selected {
+  background: var(--green);
+  color: white;
+}
+.pagination-summary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+@media (max-width: 600px) {
+  .pagination .page-numbers {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .pagination .pagination-summary {
+    grid-row: 3;
+  }
+}
+.split-amounts {
+  display: grid;
+  gap: 8px;
+}
+.split-amounts label {
+  margin: 0;
+}
+.split-amounts .currency-input span {
+  min-width: 78px;
+}
+
+.agent-page .amount-row .split-amounts .currency-input > span {
+  display: block;
+}
+.currency-input.split-selector select {
+  flex: 1;
+  width: auto;
+}

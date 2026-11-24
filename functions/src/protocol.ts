@@ -1,7 +1,8 @@
 /** Versioned wire protocol. Times are milliseconds; identity comes from Auth. */
 export const SYNC_VERSION = 1;
 export const TYPES = ['deposit', 'withdrawal', 'loanInstalment'] as const;
-export type Kind = 'session' | 'entry' | 'void' | 'record' | 'note';
+export type Kind =
+  'session' | 'entry' | 'entryPair' | 'void' | 'record' | 'note';
 export interface Command {
   version: 1;
   actorId?: string;
@@ -89,4 +90,82 @@ export function newLines(
       },
     ]),
   );
+}
+
+export type SplitAmounts = Partial<
+  Record<'deposit' | 'withdrawal', { saving: number; fixed: number }>
+>;
+/** Canonical expansion shared by durable projection and server validation. */
+export function entryParts(d: Record<string, any>, paired = false) {
+  if (
+    !d.values ||
+    !TYPES.every((t) => integer(d.values[t])) ||
+    !TYPES.some((t) => d.values[t] > 0) ||
+    Object.keys(d.values).some((t) => !TYPES.includes(t as any))
+  )
+    throw new Error('Check the whole UGX amounts.');
+  if (!paired) {
+    if (d.splitAmounts !== undefined)
+      throw new Error('Unsupported split entry.');
+    return [
+      {
+        entryId: d.entryId as string,
+        values: d.values as Record<string, number>,
+        accountTypes: d.accountTypes ?? {},
+      },
+    ];
+  }
+  if (
+    !d.otherAccountId ||
+    typeof d.fixedEntryId !== 'string' ||
+    !/^[A-Za-z0-9_-]{8,100}$/.test(d.fixedEntryId) ||
+    d.fixedEntryId === d.entryId ||
+    !d.splitAmounts ||
+    typeof d.splitAmounts !== 'object' ||
+    Array.isArray(d.splitAmounts) ||
+    !Object.keys(d.splitAmounts).length ||
+    Object.keys(d.splitAmounts).some(
+      (t) => !['deposit', 'withdrawal'].includes(t),
+    )
+  )
+    throw new Error('Check the paired entry references and amounts.');
+  const saving = {
+    deposit: 0,
+    withdrawal: 0,
+    loanInstalment: d.values.loanInstalment,
+  };
+  const fixed = { deposit: 0, withdrawal: 0, loanInstalment: 0 };
+  for (const t of ['deposit', 'withdrawal'] as const) {
+    const split = d.splitAmounts[t];
+    if (split !== undefined) {
+      if (
+        !split ||
+        !integer(split.saving) ||
+        !integer(split.fixed) ||
+        split.saving <= 0 ||
+        split.fixed <= 0 ||
+        Object.keys(split).some((k) => !['saving', 'fixed'].includes(k)) ||
+        split.saving + split.fixed !== d.values[t]
+      )
+        throw new Error('Enter both Saving and Fixed amounts above zero.');
+      saving[t] = split.saving;
+      fixed[t] = split.fixed;
+    } else if (d.values[t] > 0) {
+      if (!['saving', 'fixed'].includes(d.accountTypes?.[t]))
+        throw new Error('Choose Fixed, Saving or Both.');
+      (d.accountTypes[t] === 'saving' ? saving : fixed)[t] = d.values[t];
+    }
+  }
+  return [
+    {
+      entryId: d.entryId as string,
+      values: saving,
+      accountTypes: { deposit: 'saving', withdrawal: 'saving' },
+    },
+    {
+      entryId: d.fixedEntryId as string,
+      values: fixed,
+      accountTypes: { deposit: 'fixed', withdrawal: 'fixed' },
+    },
+  ];
 }

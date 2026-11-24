@@ -611,7 +611,7 @@ test('multi-account members select in one tap and save mixed account types with 
   const viewerContext = await browser.newContext();
   const viewer = await viewerContext.newPage();
   await login(viewer, 'viewer');
-  await viewer.getByLabel('Search this page', { exact: true }).fill('LCT006');
+  await viewer.getByLabel('Search workday', { exact: true }).fill('LCT006');
   const row = viewer
     .locator('.entry-row')
     .filter({ hasText: '33,008' })
@@ -632,7 +632,7 @@ test('multi-account members select in one tap and save mixed account types with 
   });
 });
 
-test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages navigable', async ({
+test('viewer paginates fifty lines after workday-wide filtering and resets empty searches', async ({
   page,
 }) => {
   // Admin SDK is deliberately restricted to local synthetic emulator fixtures.
@@ -694,21 +694,28 @@ test('viewer fetches cursor pages of 50 entries and keeps empty filtered pages n
       page.getByRole('button', { name: 'Next', exact: true }),
     ).toBeDisabled();
     await page
-      .getByLabel('Search this page', { exact: true })
+      .getByLabel('Search workday', { exact: true })
       .fill('no such fixture');
     await expect(
       page.getByText('No matching entries', { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole('button', { name: 'Previous', exact: true }),
-    ).toBeEnabled();
-    await page.getByLabel('Clear search this page').click();
-    await page.getByRole('button', { name: 'Previous', exact: true }).click();
+    ).toBeDisabled();
+    await expect(
+      page.getByRole('button', { name: 'Page 1', exact: true }),
+    ).toHaveAttribute('aria-current', 'page');
+    await page.getByLabel('Clear search workday').click();
     await expect(page.locator('.register .entry-row')).toHaveCount(50);
-    await page.getByRole('button', { name: 'Previous', exact: true }).click();
-    await expect(page.locator('.register .entry-row')).toHaveCount(50);
-    await page.getByRole('button', { name: 'Previous', exact: true }).click();
     await expect(page.locator('.register')).toContainText('Page fixture 54');
+    await page
+      .getByLabel('Search workday', { exact: true })
+      .fill('Page fixture 0');
+    await expect(page.locator('.register .entry-row')).toHaveCount(3);
+    await expect(
+      page.getByRole('button', { name: 'Next', exact: true }),
+    ).toBeDisabled();
+    await page.getByLabel('Clear search workday').click();
     await page.setViewportSize({ width: 320, height: 760 });
     await expect(
       page

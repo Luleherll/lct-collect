@@ -57,6 +57,176 @@ describe.skipIf(!enabled)('durable financial sync API', () => {
       active: true,
     });
   });
+  it('atomically saves paired entries, retries once, and records/voids each line independently', async () => {
+    const agent = 'pair-' + randomUUID(),
+      viewer = 'pair-viewer-' + randomUUID(),
+      day = dayAt(Date.now()),
+      sessionId = `${agent}_${day}`;
+    await db
+      .doc(`users/${agent}`)
+      .set({ role: 'agent', active: true, displayName: 'Pair Agent' });
+    await db
+      .doc(`users/${viewer}`)
+      .set({ role: 'viewer', active: true, displayName: 'Pair Viewer' });
+    const member = {
+      memberId: 'pair-member',
+      fullName: 'Pair Member',
+      uniqueNumber: 'LCTPAIR',
+      accountNumber: '001',
+      active: true,
+    };
+    await db.doc('members/pair-member').set(member);
+    await db
+      .doc('members/pair-other')
+      .set({ ...member, memberId: 'pair-other', accountNumber: '002' });
+    await call(
+      command('session', `session:${sessionId}`, {
+        sessionId,
+        workday: day,
+        openingCash: 0,
+      }),
+      agent,
+    );
+    const entryId = randomUUID(),
+      fixedEntryId = randomUUID();
+    const pair = command('entryPair', `session:${sessionId}`, {
+      sessionId,
+      entryId,
+      fixedEntryId,
+      member,
+      otherAccountId: 'pair-other',
+      note: 'Paired',
+      accountTypes: {},
+      values: { deposit: 1000, withdrawal: 1000, loanInstalment: 0 },
+      splitAmounts: {
+        deposit: { saving: 100, fixed: 900 },
+        withdrawal: { saving: 800, fixed: 200 },
+      },
+    });
+    const result = await call(pair, agent);
+    expect(result.status).not.toBe('rejected');
+    expect(await call(pair, agent)).toEqual(result);
+    expect((await db.doc(`sessions/${sessionId}`).get()).data()).toMatchObject({
+      expectedCash: 0,
+      totalDeposits: 1000,
+      totalWithdrawals: 1000,
+      revision: 1,
+    });
+    for (const [id, account] of [
+      [entryId, 'saving'],
+      [fixedEntryId, 'fixed'],
+    ]) {
+      const e = (await db.doc(`entries/${id}`).get()).data()!;
+      expect(e.submissionGroupId).toBe(pair.id);
+      for (const type of ['deposit', 'withdrawal']) {
+        expect(e.lines[type].accountType).toBe(account);
+        const mark = command('record', `record:${id}:${type}`, {
+          entryId: id,
+          type,
+          recorded: true,
+          expectedRevision: 0,
+        });
+        expect((await call(mark, viewer)).status).not.toBe('rejected');
+      }
+    }
+    await call(
+      command('record', `record:${fixedEntryId}:withdrawal`, {
+        entryId: fixedEntryId,
+        type: 'withdrawal',
+        recorded: false,
+        expectedRevision: 1,
+      }),
+      viewer,
+    );
+    const voided = await call(
+      command('void', `session:${sessionId}`, {
+        sessionId,
+        entryId: fixedEntryId,
+        type: 'withdrawal',
+        reason: 'Correct fixed withdrawal',
+      }),
+      agent,
+    );
+    expect(voided.status).not.toBe('rejected');
+    expect(
+      (await db.doc(`sessions/${sessionId}`).get()).data()!.expectedCash,
+    ).toBe(200);
+    expect(
+      (await db.doc(`entries/${entryId}`).get()).data()!.lines.withdrawal.state,
+    ).toBe('active');
+    // Invalid second account leaves neither entry nor a changed cash total.
+    const bad = command('entryPair', `session:${sessionId}`, {
+      ...pair.data,
+      entryId: randomUUID(),
+      fixedEntryId: randomUUID(),
+      otherAccountId: 'missing-member',
+    });
+    expect((await call(bad, agent)).status).toBe('rejected');
+    for (const id of [bad.data.entryId, bad.data.fixedEntryId])
+      expect((await db.doc(`entries/${id}`).get()).exists).toBe(false);
+    expect(
+      (await db.doc(`sessions/${sessionId}`).get()).data()!.expectedCash,
+    ).toBe(200);
+    const collision = command('entryPair', `session:${sessionId}`, {
+      ...pair.data,
+      entryId: randomUUID(),
+      fixedEntryId,
+    });
+    expect((await call(collision, agent)).status).toBe('rejected');
+    expect(
+      (await db.doc(`entries/${collision.data.entryId}`).get()).exists,
+    ).toBe(false);
+  });
+  it('serializes competing paired withdrawals without posting either half of a rejection', async () => {
+    const agent = 'pair-race-' + randomUUID(),
+      day = dayAt(Date.now()),
+      sessionId = `${agent}_${day}`;
+    await db
+      .doc(`users/${agent}`)
+      .set({ role: 'agent', active: true, displayName: 'Pair Race' });
+    const member = {
+      memberId: 'pair-race-main',
+      fullName: 'Pair Race',
+      uniqueNumber: 'LCT777',
+      accountNumber: '7771',
+      active: true,
+    };
+    await db.doc('members/pair-race-main').set(member);
+    await db
+      .doc('members/pair-race-other')
+      .set({ ...member, memberId: 'pair-race-other', accountNumber: '7772' });
+    await call(
+      command('session', `session:${sessionId}`, {
+        sessionId,
+        workday: day,
+        openingCash: 1000,
+      }),
+      agent,
+    );
+    const make = () =>
+      command('entryPair', `session:${sessionId}`, {
+        sessionId,
+        entryId: randomUUID(),
+        fixedEntryId: randomUUID(),
+        member,
+        otherAccountId: 'pair-race-other',
+        note: '',
+        accountTypes: {},
+        values: { deposit: 0, withdrawal: 600, loanInstalment: 0 },
+        splitAmounts: { withdrawal: { saving: 300, fixed: 300 } },
+      });
+    const commands = [make(), make()],
+      results = await Promise.all(commands.map((c) => call(c, agent)));
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    expect(
+      (await db.doc(`sessions/${sessionId}`).get()).data()!.expectedCash,
+    ).toBe(400);
+    for (const [index, c] of commands.entries())
+      for (const id of [c.data.entryId, c.data.fixedEntryId])
+        expect((await db.doc(`entries/${id}`).get()).exists).toBe(
+          results[index].status !== 'rejected',
+        );
+  });
   it('accepts late work under the original workday and never duplicates after a lost response', async () => {
     const time = Date.now() - 2 * 86400000,
       day = dayAt(time),

@@ -78,6 +78,7 @@ export interface Line {
   recordingHistory: Record<string, RecordingEvent>;
 }
 export interface Entry {
+  submissionGroupId?: string;
   capturedAt?: Timestamp;
   receivedAt?: Timestamp;
   lateSubmission?: boolean;

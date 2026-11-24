@@ -142,6 +142,7 @@ function AccountChoices({
           page={pages.page}
           pageCount={pages.pageCount}
           summary={pages.summary}
+          onPageChange={pages.goTo}
           onPrevious={pages.previous}
           onNext={pages.next}
           busy={disabled}

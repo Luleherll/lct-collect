@@ -7,5 +7,9 @@ export function affectedPaths(c: Command, uid: string) {
       ? [`sessions/${d.sessionId}`]
       : c.kind === 'record'
         ? [`entries/${d.entryId}`]
-        : [`sessions/${d.sessionId}`, `entries/${d.entryId}`];
+        : [
+            `sessions/${d.sessionId}`,
+            `entries/${d.entryId}`,
+            ...(c.kind === 'entryPair' ? [`entries/${d.fixedEntryId}`] : []),
+          ];
 }

@@ -8,6 +8,11 @@ export function usePagination<T>(items: T[], key: string) {
   }, [key]);
   const pageCount = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
   const page = state.key === key ? Math.min(state.page, pageCount) : 1;
+  useEffect(() => {
+    setState((s) =>
+      s.key === key && s.page > pageCount ? { key, page: pageCount } : s,
+    );
+  }, [key, pageCount]);
   const offset = (page - 1) * PAGE_SIZE;
   return {
     page,
@@ -16,6 +21,8 @@ export function usePagination<T>(items: T[], key: string) {
     summary: items.length
       ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, items.length)} of ${items.length}`
       : 'No matches',
+    goTo: (target: number) =>
+      setState({ key, page: Math.max(1, Math.min(pageCount, target)) }),
     previous: () => setState({ key, page: Math.max(1, page - 1) }),
     next: () => setState({ key, page: Math.min(pageCount, page + 1) }),
   };

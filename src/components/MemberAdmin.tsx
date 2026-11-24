@@ -132,6 +132,7 @@ export default function MemberAdmin({
                   page={issues.page}
                   pageCount={issues.pageCount}
                   summary={issues.summary}
+                  onPageChange={issues.goTo}
                   onPrevious={issues.previous}
                   onNext={issues.next}
                   busy={busy}
@@ -180,6 +181,7 @@ export default function MemberAdmin({
             page={preview.page}
             pageCount={preview.pageCount}
             summary={preview.summary}
+            onPageChange={preview.goTo}
             onPrevious={preview.previous}
             onNext={preview.next}
             busy={busy}
@@ -244,6 +246,7 @@ export default function MemberAdmin({
           page={directory.page}
           pageCount={directory.pageCount}
           summary={directory.summary}
+          onPageChange={(page) => changePage(() => directory.goTo(page))}
           onPrevious={() => changePage(directory.previous)}
           onNext={() => changePage(directory.next)}
           busy={busy}

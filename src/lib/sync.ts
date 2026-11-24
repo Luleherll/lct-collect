@@ -87,7 +87,7 @@ export async function enqueue(
       } else if (s.drafts?.noteEdit?.noteId === data.noteId)
         delete s.drafts!.noteEdit;
     }
-    if (kind === 'entry' && s.drafts?.collection)
+    if ((kind === 'entry' || kind === 'entryPair') && s.drafts?.collection)
       s.drafts.collection = { noteDraft: s.drafts.collection.noteDraft ?? '' };
   });
   performance.measure('lct.local-save', {
@@ -391,7 +391,7 @@ export async function prepareRetry(id: string) {
   if (!p) throw new Error('This change is no longer pending.');
   await refreshCommand(p.command);
   const data = { ...p.command.data };
-  if (p.command.kind === 'entry') {
+  if (p.command.kind === 'entry' || p.command.kind === 'entryPair') {
     const snap = await getDocFromServer(
       doc(db(), 'members', data.member.memberId),
     );
