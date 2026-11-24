@@ -1,6 +1,7 @@
 import { Timestamp } from 'firebase/firestore';
 import { firstOccurrence } from '../../functions/src/schedule';
 import {
+  entryParts,
   dayStart,
   newLines,
   totals,
@@ -34,31 +35,34 @@ export function project(
         lastMutationId: '',
         createdAt: time,
       };
-  } else if (c.kind === 'entry') {
-    if (r[ep]) return r;
+  } else if (c.kind === 'entry' || c.kind === 'entryPair') {
+    const parts = entryParts(d, c.kind === 'entryPair');
+    if (parts.some((part) => r[`entries/${part.entryId}`])) return r;
     const s = r[sp];
     if (!s) throw new Error('Start a session first.');
     const m = d.member,
       typed = !!d.otherAccountId;
-    r[ep] = {
-      entryId: d.entryId,
-      sessionId: d.sessionId,
-      workday: s.workday,
-      agentId: uid,
-      agentNameSnapshot: d.agentName,
-      memberId: m.memberId,
-      memberNameSnapshot: m.fullName,
-      accountNumberSnapshot: typed ? '' : m.accountNumber,
-      ...(m.uniqueNumber ? { uniqueNumberSnapshot: m.uniqueNumber } : {}),
-      ...(typed
-        ? { accountSelection: 'type', otherAccountId: d.otherAccountId }
-        : {}),
-      note: d.note,
-      createdAt: time,
-      capturedAt: time,
-      financialRevision: s.revision + 1,
-      lines: newLines(d.values, d.accountTypes, typed),
-    };
+    for (const part of parts)
+      r[`entries/${part.entryId}`] = {
+        entryId: part.entryId,
+        sessionId: d.sessionId,
+        workday: s.workday,
+        agentId: uid,
+        agentNameSnapshot: d.agentName,
+        memberId: m.memberId,
+        memberNameSnapshot: m.fullName,
+        accountNumberSnapshot: typed ? '' : m.accountNumber,
+        ...(m.uniqueNumber ? { uniqueNumberSnapshot: m.uniqueNumber } : {}),
+        ...(typed
+          ? { accountSelection: 'type', otherAccountId: d.otherAccountId }
+          : {}),
+        note: d.note,
+        createdAt: time,
+        capturedAt: time,
+        financialRevision: s.revision + 1,
+        lines: newLines(part.values, part.accountTypes, typed),
+        ...(c.kind === 'entryPair' ? { submissionGroupId: c.id } : {}),
+      };
     r[sp] = {
       ...s,
       ...totals(s, d.values),

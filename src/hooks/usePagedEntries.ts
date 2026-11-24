@@ -1,6 +1,6 @@
 import { orderBy, where } from 'firebase/firestore';
 import { useLocalRecords } from './useLocal';
-import { usePagination, PAGE_SIZE } from './usePagination';
+import { PAGE_SIZE } from './usePagination';
 import { flatten, type Entry } from '../lib/models';
 export const ENTRY_PAGE_SIZE = PAGE_SIZE;
 export function usePagedEntries(
@@ -29,15 +29,5 @@ export function usePagedEntries(
         (b.createdAt?.toMillis() ?? 0) - (a.createdAt?.toMillis() ?? 0) ||
         b.entryId.localeCompare(a.entryId),
     );
-  const paging = usePagination(flatten(data), `${identity}/${day}`);
-  return {
-    ...result,
-    data,
-    rows: paging.items,
-    page: paging.page - 1,
-    previous: paging.previous,
-    next: paging.next,
-    hasNext: paging.page < paging.pageCount,
-    nextCursor: null,
-  };
+  return { ...result, data, rows: flatten(data) };
 }

@@ -511,8 +511,10 @@ export default function Notes({
         <Pagination
           label="Note pages"
           page={pages.page}
+          pageCount={pages.pageCount}
           hasNext={pages.page < pages.pageCount}
           hasPrevious={pages.page > 1}
+          onPageChange={pages.goTo}
           onPrevious={pages.previous}
           onNext={pages.next}
           busy={busy}
@@ -543,6 +545,7 @@ export default function Notes({
               label="Notes without reminder pages"
               page={without.page}
               pageCount={without.pageCount}
+              onPageChange={without.goTo}
               onPrevious={without.previous}
               onNext={without.next}
               focusTarget="unscheduled-notes"

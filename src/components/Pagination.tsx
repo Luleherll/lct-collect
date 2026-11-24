@@ -6,6 +6,7 @@ export default function Pagination({
   summary,
   hasPrevious = page > 1,
   hasNext = pageCount !== undefined && page < pageCount,
+  onPageChange,
   onPrevious,
   onNext,
   busy = false,
@@ -17,6 +18,7 @@ export default function Pagination({
   summary?: string;
   hasPrevious?: boolean;
   hasNext?: boolean;
+  onPageChange?: (page: number) => void;
   onPrevious: () => void;
   onNext: () => void;
   busy?: boolean;
@@ -50,7 +52,44 @@ export default function Pagination({
       >
         Previous
       </button>
-      <span role="status">
+      {pageCount !== undefined && onPageChange && (
+        <div className="page-numbers" aria-label="Page numbers">
+          {Array.from(
+            new Set(
+              (pageCount <= 5
+                ? Array.from({ length: pageCount }, (_, i) => i + 1)
+                : [1, page - 1, page, page + 1, pageCount]
+              ).filter((n) => n >= 1 && n <= pageCount),
+            ),
+          )
+            .sort((a, b) => a - b)
+            .flatMap((n, i, all) => [
+              ...(i && n - all[i - 1] > 1
+                ? [
+                    <span aria-hidden="true" key={'gap' + n}>
+                      …
+                    </span>,
+                  ]
+                : []),
+              <button
+                type="button"
+                className={
+                  'button small ' + (n === page ? 'selected' : 'outline')
+                }
+                key={n}
+                aria-label={`Page ${n}`}
+                aria-current={n === page ? 'page' : undefined}
+                disabled={busy}
+                onClick={() => {
+                  if (n !== page) navigate(() => onPageChange(n));
+                }}
+              >
+                {n}
+              </button>,
+            ])}
+        </div>
+      )}
+      <span className="pagination-summary" role="status">
         {summary && <>{summary} · </>}Page {page}
         {pageCount !== undefined && <> of {pageCount}</>}
       </span>

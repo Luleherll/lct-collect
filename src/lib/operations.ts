@@ -1,3 +1,4 @@
+import type { SplitAmounts } from '../../functions/src/protocol';
 import { doc, getDocFromServer } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { workday } from './domain';
@@ -35,14 +36,18 @@ export async function saveEntry(
     otherAccountId?: string;
     accountTypes?: Partial<Record<LineType, AccountType>>;
     note?: string;
+    splitAmounts?: SplitAmounts;
   } = {},
 ) {
   if (uid !== auth.currentUser?.uid) throw new Error('Account changed.');
   await enqueue(
-    'entry',
+    details.splitAmounts ? 'entryPair' : 'entry',
     `session:${sessionId}`,
     {
       entryId: id,
+      ...(details.splitAmounts
+        ? { splitAmounts: details.splitAmounts, fixedEntryId: id + '_fixed' }
+        : {}),
       sessionId,
       member,
       values,

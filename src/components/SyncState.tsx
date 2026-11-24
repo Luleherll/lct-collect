@@ -15,7 +15,8 @@ export default function SyncState({
   const work = localState().commands.filter(
     (p) =>
       (entryId &&
-        p.command.data.entryId === entryId &&
+        (p.command.data.entryId === entryId ||
+          p.command.data.fixedEntryId === entryId) &&
         (!type || !p.command.data.type || p.command.data.type === type)) ||
       (noteId && p.command.data.noteId === noteId) ||
       (sessionId && p.command.data.sessionId === sessionId),

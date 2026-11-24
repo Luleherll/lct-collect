@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import {
+  entryParts,
   dayAt,
   dayStart,
   integer,
@@ -60,7 +61,9 @@ export function validateCommand(c: Command) {
     typeof c.scope !== 'string' ||
     c.scope.length > 220 ||
     (c.dependsOn !== null && !validId(c.dependsOn)) ||
-    !['session', 'entry', 'void', 'record', 'note'].includes(c.kind)
+    !['session', 'entry', 'entryPair', 'void', 'record', 'note'].includes(
+      c.kind,
+    )
   )
     throw new HttpsError(
       'invalid-argument',
@@ -170,20 +173,25 @@ async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
       if (!s) tx.create(sessionRef!, next);
       records[sessionRef!.path] = next;
       revision = next.revision;
-    } else if (c.kind === 'entry') {
+    } else if (c.kind === 'entry' || c.kind === 'entryPair') {
       if (!s || s.agentId !== uid || sessionId !== `${uid}_${s.workday}`)
         fail('Start a session first.');
       if (e) fail('This entry reference already exists. Check recent entries.');
       if (!validId(entryId) || dayAt(c.capturedAt) !== s.workday)
         fail('The entry does not belong to this workday.');
+      let parts: ReturnType<typeof entryParts>;
+      try {
+        parts = entryParts(d, c.kind === 'entryPair');
+      } catch (error) {
+        fail(error instanceof Error ? error.message : 'Check entry amounts.');
+      }
       const values = d.values;
-      if (
-        !values ||
-        !TYPES.every((t) => integer(values[t])) ||
-        !TYPES.some((t) => values[t] > 0) ||
-        Object.keys(values).some((t) => !TYPES.includes(t as any))
-      )
-        fail('Check the whole UGX amounts.');
+      const extraRefs = parts
+        .slice(1)
+        .map((part) => db.doc(`entries/${part.entryId}`));
+      const extras = await Promise.all(extraRefs.map((ref) => tx.get(ref)));
+      if (extras.some((snap) => snap.exists))
+        fail('This entry reference already exists. Check recent entries.');
       if (!d.member || typeof d.member !== 'object')
         fail('Select an account first.');
       const m = (
@@ -212,7 +220,11 @@ async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
             (t) =>
               t !== 'loanInstalment' &&
               values[t] > 0 &&
-              !['fixed', 'saving'].includes(d.accountTypes?.[t]),
+              !parts.every(
+                (part) =>
+                  !part.values[t] ||
+                  ['fixed', 'saving'].includes(part.accountTypes[t]),
+              ),
           )
         )
           fail('Member accounts or account types changed. Review this entry.');
@@ -221,8 +233,8 @@ async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
         fail('Keep notes within 2,000 characters.');
       revision = s.revision + 1;
       const late = now.toMillis() >= s.endsAt.toMillis();
-      const next = {
-        entryId,
+      const makeEntry = (part: (typeof parts)[number]) => ({
+        entryId: part.entryId,
         sessionId,
         workday: s.workday,
         agentId: uid,
@@ -241,17 +253,22 @@ async function financialTransaction(uid: string, c: Command): Promise<Outcome> {
         lateSubmission: late,
         clockFlag: c.capturedAt > now.toMillis() + 300000,
         financialRevision: revision,
-        lines: newLines(values, d.accountTypes, typed),
-      };
+        lines: newLines(part.values, part.accountTypes, typed),
+        ...(c.kind === 'entryPair' ? { submissionGroupId: c.id } : {}),
+      });
       const nextSession = {
         ...s,
         ...totals(s, values),
         revision,
         lastMutationId: entryId,
       };
-      tx.create(entryRef!, next);
+      parts.forEach((part, index) => {
+        const ref = index === 0 ? entryRef! : extraRefs[index - 1];
+        const next = makeEntry(part);
+        tx.create(ref, next);
+        records[ref.path] = next;
+      });
       tx.set(sessionRef!, nextSession);
-      records[entryRef!.path] = next;
       records[sessionRef!.path] = nextSession;
     } else {
       if (!e || !TYPES.includes(d.type)) fail('This line is unavailable.');

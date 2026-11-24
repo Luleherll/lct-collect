@@ -104,6 +104,15 @@ export default function SyncQueue() {
                 {LABELS[type]}: UGX {money(d.values[type] ?? 0)}
               </p>
             ))}
+          {d.splitAmounts &&
+            Object.entries(d.splitAmounts).map(
+              ([type, split]: [string, any]) => (
+                <p key={type}>
+                  {LABELS[type as keyof typeof LABELS]} · Saving: UGX{' '}
+                  {money(split.saving)} · Fixed: UGX {money(split.fixed)}
+                </p>
+              ),
+            )}
           {d.openingCash !== undefined && (
             <p>Opening cash: UGX {money(d.openingCash)}</p>
           )}
@@ -195,6 +204,18 @@ export default function SyncQueue() {
                     data.values = Object.fromEntries(
                       TYPES.map((t) => [t, amount(amounts[t] ?? '', true)]),
                     );
+                  if (data.splitAmounts) {
+                    data.splitAmounts = Object.fromEntries(
+                      Object.entries(data.splitAmounts).map(
+                        ([type, split]: [string, any]) => {
+                          const saving = amount(String(split.saving));
+                          const fixed = amount(String(split.fixed));
+                          data.values[type] = amount(String(saving + fixed));
+                          return [type, { saving, fixed }];
+                        },
+                      ),
+                    );
+                  }
                   await resolveCommand(item.command.id, data);
                   setSelected('');
                   setProposal(null);
@@ -206,18 +227,45 @@ export default function SyncQueue() {
               }}
             >
               {d.values &&
-                TYPES.map((type) => (
-                  <label key={type}>
-                    {LABELS[type]} (UGX)
-                    <input
-                      inputMode="numeric"
-                      value={amounts[type] ?? ''}
-                      onChange={(e) =>
-                        setAmounts((v) => ({ ...v, [type]: e.target.value }))
-                      }
-                    />
-                  </label>
-                ))}
+                TYPES.map((type) =>
+                  proposal.splitAmounts?.[type] ? (
+                    <div key={type}>
+                      {(['saving', 'fixed'] as const).map((account) => (
+                        <label key={account}>
+                          {LABELS[type]} ·{' '}
+                          {account === 'saving' ? 'Saving' : 'Fixed'} (UGX)
+                          <input
+                            inputMode="numeric"
+                            value={proposal.splitAmounts[type][account]}
+                            onChange={(e) =>
+                              setProposal({
+                                ...proposal,
+                                splitAmounts: {
+                                  ...proposal.splitAmounts,
+                                  [type]: {
+                                    ...proposal.splitAmounts[type],
+                                    [account]: e.target.value,
+                                  },
+                                },
+                              })
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <label key={type}>
+                      {LABELS[type]} (UGX)
+                      <input
+                        inputMode="numeric"
+                        value={amounts[type] ?? ''}
+                        onChange={(e) =>
+                          setAmounts((v) => ({ ...v, [type]: e.target.value }))
+                        }
+                      />
+                    </label>
+                  ),
+                )}
               {item.command.kind === 'note' && d.action === 'save' && (
                 <label>
                   Note text

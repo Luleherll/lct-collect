@@ -1,3 +1,4 @@
+import { entryParts, type SplitAmounts } from '../../functions/src/protocol';
 import SyncQueue from './SyncQueue';
 import { useOfflinePreparation } from '../hooks/useOfflinePreparation';
 import SyncState from './SyncState';
@@ -86,11 +87,16 @@ type Receipt = Pick<
   | 'workday'
   | 'uniqueNumberSnapshot'
 > & {
+  additional?: Receipt[];
   createdAt?: Entry['createdAt'];
   lines: Partial<
     Record<LineType, { amount: number; accountType?: AccountType }>
   >;
 };
+const emptySplits = () => ({
+  deposit: { saving: '', fixed: '' },
+  withdrawal: { saving: '', fixed: '' },
+});
 const EMPTY_AMOUNTS = { deposit: '', withdrawal: '', loanInstalment: '' };
 export default function App({ route: initialRoute }: { route: string }) {
   useLocalVersion();
@@ -123,8 +129,13 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [reviewSessionId, setReviewSessionId] = useState('');
   const [otherAccountId, setOtherAccountId] = useState('');
   const [accountTypes, setAccountTypes] = useState<
-    Partial<Record<LineType, AccountType>>
+    Partial<Record<LineType, AccountType | 'both'>>
   >({});
+  const [splitValues, setSplitValues] = useState(emptySplits);
+  const [reviewSplit, setReviewSplit] = useState<SplitAmounts | undefined>();
+  const [reviewParts, setReviewParts] = useState<ReturnType<typeof entryParts>>(
+    [],
+  );
   const [entryNote, setEntryNote] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [noteExtraDirty, setNoteExtraDirty] = useState(false);
@@ -151,6 +162,7 @@ export default function App({ route: initialRoute }: { route: string }) {
 
   const dirty =
     TYPES.some((t) => values[t].trim() !== '') ||
+    Object.values(splitValues).some((v) => v.saving.trim() || v.fixed.trim()) ||
     !!entryNote.trim() ||
     (route === 'notes' && (!!noteDraft.trim() || noteExtraDirty));
   const draftLoaded = useRef('');
@@ -165,6 +177,7 @@ export default function App({ route: initialRoute }: { route: string }) {
       setValues(d.values ?? { ...EMPTY_AMOUNTS });
       setEntryNote(d.entryNote ?? '');
       setAccountTypes(d.accountTypes ?? {});
+      setSplitValues(d.splitValues ?? emptySplits());
       setOtherAccountId(d.otherAccountId ?? '');
       setNoteDraft(d.noteDraft ?? '');
     }
@@ -188,6 +201,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             values,
             entryNote,
             accountTypes,
+            splitValues,
             otherAccountId,
             noteDraft,
           },
@@ -202,6 +216,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     values,
     entryNote,
     accountTypes,
+    splitValues,
     otherAccountId,
     noteDraft,
   ]);
@@ -291,6 +306,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     }).catch(() => {});
     setNoteExtraDirty(false);
     setAccountTypes({});
+    setSplitValues(emptySplits());
     setOtherAccountId('');
     if (next !== 'agent') {
       setMember(null);
@@ -396,6 +412,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         setEntryNote('');
         setNoteDraft('');
         setAccountTypes({});
+        setSplitValues(emptySplits());
         setOtherAccountId('');
         setReceipt(null);
         setModal(null);
@@ -707,10 +724,23 @@ export default function App({ route: initialRoute }: { route: string }) {
       if (!member) throw new Error('Select a member account first.');
       if (!session) throw new Error('Start a session first.');
       const parsed = { deposit: 0, withdrawal: 0, loanInstalment: 0 };
+      const splits: SplitAmounts = {};
+      const errorTargets: Partial<Record<LineType, string>> = {};
       const errors: Partial<Record<LineType, string>> = {};
       for (const t of TYPES) {
         try {
-          parsed[t] = amount(values[t], true);
+          if (
+            t !== 'loanInstalment' &&
+            otherAccountId &&
+            accountTypes[t] === 'both'
+          ) {
+            errorTargets[t] = `${t}-saving`;
+            const saving = amount(splitValues[t].saving);
+            errorTargets[t] = `${t}-fixed`;
+            const fixed = amount(splitValues[t].fixed);
+            parsed[t] = amount(String(saving + fixed));
+            splits[t] = { saving, fixed };
+          } else parsed[t] = amount(values[t], true);
           if (
             otherAccountId &&
             t !== 'loanInstalment' &&
@@ -732,7 +762,9 @@ export default function App({ route: initialRoute }: { route: string }) {
               parsed[invalid] > 0 &&
               !accountTypes[invalid]
               ? `${invalid}-account-type`
-              : invalid,
+              : accountTypes[invalid] === 'both'
+                ? (errorTargets[invalid] ?? `${invalid}-saving`)
+                : invalid,
           )
           ?.focus();
         return;
@@ -748,6 +780,20 @@ export default function App({ route: initialRoute }: { route: string }) {
       )
         throw new Error('Withdrawal exceeds expected cash available.');
       if (!pendingId.current) pendingId.current = crypto.randomUUID();
+      const split = Object.keys(splits).length ? splits : undefined;
+      const parts = entryParts(
+        {
+          entryId: pendingId.current,
+          fixedEntryId: pendingId.current + '_fixed',
+          values: parsed,
+          accountTypes,
+          otherAccountId,
+          ...(split ? { splitAmounts: split } : {}),
+        },
+        !!split,
+      );
+      setReviewParts(parts);
+      setReviewSplit(split);
       setReviewValues(parsed);
       setReviewSessionId(session.sessionId);
       setModal('review');
@@ -761,6 +807,7 @@ export default function App({ route: initialRoute }: { route: string }) {
       setFieldErrors({});
       setEntryNote('');
       setAccountTypes({});
+      setSplitValues(emptySplits());
       pendingId.current = crypto.randomUUID();
       setOtherAccountId(group.accounts[1]?.memberId ?? '');
       setMember(group.accounts[0]);
@@ -778,6 +825,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setMember(null);
     setOtherAccountId('');
     setAccountTypes({});
+    setSplitValues(emptySplits());
     setEntryNote('');
     setMemberQuery('');
     setValues({ ...EMPTY_AMOUNTS });
@@ -809,41 +857,39 @@ export default function App({ route: initialRoute }: { route: string }) {
         profile,
         {
           otherAccountId: otherAccountId || undefined,
-          accountTypes,
+          accountTypes: Object.fromEntries(
+            Object.entries(accountTypes).filter(([, v]) => v !== 'both'),
+          ) as Partial<Record<LineType, AccountType>>,
+          splitAmounts: reviewSplit,
           note: entryNote,
         },
       );
       storage.remove('session', `lct-pending-${user.uid}`);
       setUncertain(false);
       setModal(null);
-      const savedId = pendingId.current;
       clearForm();
-      const savedLines = Object.fromEntries(
-        TYPES.filter((t) => reviewValues[t] > 0).map((t) => [
-          t,
-          {
-            amount: reviewValues[t],
-            state: 'active',
-            recorded: false,
-            ...(otherAccountId && t !== 'loanInstalment'
-              ? { accountType: accountTypes[t] }
-              : {}),
-          },
-        ]),
-      );
-      setReceipt({
-        entryId: savedId,
+      const receipts = reviewParts.map((part) => ({
+        entryId: part.entryId,
         memberId: member.memberId,
         memberNameSnapshot: member.fullName,
         accountNumberSnapshot: otherAccountId ? '' : member.accountNumber,
         ...(otherAccountId ? { accountSelection: 'type' as const } : {}),
-        ...(member.uniqueNumber
-          ? { uniqueNumberSnapshot: member.uniqueNumber }
-          : {}),
+        uniqueNumberSnapshot: member.uniqueNumber,
         agentNameSnapshot: profile.displayName,
         workday: session.workday,
-        lines: savedLines,
-      });
+        lines: Object.fromEntries(
+          TYPES.filter((t) => part.values[t] > 0).map((t) => [
+            t,
+            {
+              amount: part.values[t],
+              ...(otherAccountId && t !== 'loanInstalment'
+                ? { accountType: part.accountTypes[t] as AccountType }
+                : {}),
+            },
+          ]),
+        ),
+      }));
+      setReceipt({ ...receipts[0], additional: receipts.slice(1) });
       setNotice('');
     } catch (e) {
       storage.remove('session', `lct-pending-${user.uid}`);
@@ -875,11 +921,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setError('');
     setModal('line');
   }
-  const allRows = [...entries.rows].sort(
-    (a, b) =>
-      (b.entry.createdAt?.toMillis() ?? 0) -
-      (a.entry.createdAt?.toMillis() ?? 0),
-  );
+  const allRows = entries.rows;
   const liveSelected =
     selectedRow &&
     allRows.find(
@@ -904,6 +946,10 @@ export default function App({ route: initialRoute }: { route: string }) {
         r.entry.uniqueNumberSnapshot,
       ),
   );
+  const entryPages = usePagination(
+    filtered,
+    `${route}/${entryDay}/${q}/${status}/${type}/${agent}`,
+  );
   const agents = Array.from(
     new Map(
       entries.data.map((e) => [e.agentId, e.agentNameSnapshot]),
@@ -919,8 +965,8 @@ export default function App({ route: initialRoute }: { route: string }) {
           <SearchField
             value={q}
             onChange={setQ}
-            label={viewer ? 'Search this page' : 'Search entries'}
-            placeholder="Search this page"
+            label={viewer ? 'Search workday' : 'Search entries'}
+            placeholder="Search workday"
           />
           <label>
             Status
@@ -985,11 +1031,14 @@ export default function App({ route: initialRoute }: { route: string }) {
       <Pagination
         label={label}
         focusTarget="entry-results"
-        page={entries.page + 1}
-        hasPrevious={entries.page > 0}
-        hasNext={entries.hasNext}
-        onPrevious={entries.previous}
-        onNext={entries.next}
+        page={entryPages.page}
+        pageCount={entryPages.pageCount}
+        summary={entryPages.summary}
+        hasPrevious={entryPages.page > 1}
+        hasNext={entryPages.page < entryPages.pageCount}
+        onPageChange={entryPages.goTo}
+        onPrevious={entryPages.previous}
+        onNext={entryPages.next}
         busy={busy || entries.loading || loadingData}
       />
     );
@@ -1018,7 +1067,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             {cached
               ? 'Saved data may be incomplete. Connect to load this workday.'
               : viewer
-                ? 'Try another page, date or filter.'
+                ? 'Try another date or filter.'
                 : 'Try another search, date or status filter.'}
           </p>
         </div>
@@ -1075,7 +1124,15 @@ export default function App({ route: initialRoute }: { route: string }) {
                 }
                 disabled={!writable}
                 aria-busy={markingRow === `${row.entry.entryId}:${row.type}`}
-                onClick={() => {
+                data-record-control="true"
+                onClick={(event) => {
+                  const control = event.currentTarget;
+                  const hadFocus = document.activeElement === control;
+                  const index = rows.findIndex(
+                    (r) =>
+                      r.entry.entryId === row.entry.entryId &&
+                      r.type === row.type,
+                  );
                   if (row.line.recorded) {
                     setSelectedRow(row);
                     setModal('undo');
@@ -1091,6 +1148,17 @@ export default function App({ route: initialRoute }: { route: string }) {
                           profile!.displayName,
                         );
                         setUndoRow(row);
+                        requestAnimationFrame(() => {
+                          if (!hadFocus || control.isConnected) return;
+                          const controls =
+                            document.querySelectorAll<HTMLButtonElement>(
+                              '#entry-results [data-record-control]',
+                            );
+                          const target =
+                            controls[Math.min(index, controls.length - 1)] ??
+                            document.getElementById('entry-results');
+                          target?.focus({ preventScroll: true });
+                        });
                       },
                       `Recorded: ${row.entry.memberNameSnapshot} · ${LABELS[row.type]} · UGX ${money(row.line.amount)}.`,
                     ).finally(() => setMarkingRow(''));
@@ -1279,13 +1347,25 @@ export default function App({ route: initialRoute }: { route: string }) {
                   ? receipt.uniqueNumberSnapshot
                   : `Account ${receipt.accountNumberSnapshot}`}{' '}
                 ·{' '}
-                {TYPES.filter((t) => receipt.lines[t])
-                  .map(
-                    (t) =>
-                      `${LABELS[t]}${receipt.lines[t]!.accountType ? ` (${ACCOUNT_TYPES[receipt.lines[t]!.accountType!]})` : ''} UGX ${money(receipt.lines[t]!.amount)}`,
+                {[receipt, ...(receipt.additional ?? [])]
+                  .flatMap((part) =>
+                    TYPES.filter((t) => part.lines[t]).map(
+                      (t) =>
+                        `${LABELS[t]}${part.lines[t]!.accountType ? ` (${ACCOUNT_TYPES[part.lines[t]!.accountType!]})` : ''} UGX ${money(part.lines[t]!.amount)}`,
+                    ),
                   )
                   .join(' · ')}
               </span>
+              {!!receipt.additional?.length && (
+                <span>
+                  {(['deposit', 'withdrawal'] as const)
+                    .map(
+                      (t) =>
+                        `${LABELS[t]} total UGX ${money([receipt, ...receipt.additional!].reduce((sum, part) => sum + (part.lines[t]?.amount ?? 0), 0))}`,
+                    )
+                    .join(' · ')}
+                </span>
+              )}
             </div>
             <button
               className="icon-button"
@@ -1387,6 +1467,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                             ) {
                               setOtherAccountId('');
                               setAccountTypes({});
+                              setSplitValues(emptySplits());
                               setEntryNote('');
                               setValues({ ...EMPTY_AMOUNTS });
                               setFieldErrors({});
@@ -1416,6 +1497,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                           page={searchPages.page}
                           pageCount={searchPages.pageCount}
                           summary={searchPages.summary}
+                          onPageChange={searchPages.goTo}
                           onPrevious={searchPages.previous}
                           onNext={searchPages.next}
                           busy={busy || uncertain}
@@ -1493,11 +1575,38 @@ export default function App({ route: initialRoute }: { route: string }) {
                               value={accountTypes[t] ?? ''}
                               disabled={!otherAccountId || busy || uncertain}
                               onChange={(e) => {
-                                if (!e.target.value)
-                                  setValues((v) => ({ ...v, [t]: '' }));
+                                const mode = e.target.value as
+                                  AccountType | 'both';
+                                const previous = accountTypes[t];
+                                {
+                                  if (
+                                    mode === 'both' &&
+                                    (previous === 'saving' ||
+                                      previous === 'fixed')
+                                  )
+                                    setSplitValues((v) => ({
+                                      ...v,
+                                      [t]: { ...v[t], [previous]: values[t] },
+                                    }));
+                                  if (
+                                    previous === 'both' &&
+                                    (mode === 'saving' || mode === 'fixed')
+                                  )
+                                    setValues((v) => ({
+                                      ...v,
+                                      [t]: splitValues[t][mode],
+                                    }));
+                                  if (!mode) {
+                                    setValues((v) => ({ ...v, [t]: '' }));
+                                    setSplitValues((v) => ({
+                                      ...v,
+                                      [t]: { saving: '', fixed: '' },
+                                    }));
+                                  }
+                                }
                                 setAccountTypes((v) => ({
                                   ...v,
-                                  [t]: e.target.value as AccountType,
+                                  [t]: mode,
                                 }));
                                 setFieldErrors((v) => ({
                                   ...v,
@@ -1508,59 +1617,130 @@ export default function App({ route: initialRoute }: { route: string }) {
                               <option value="">Account type</option>
                               <option value="fixed">Fixed</option>
                               <option value="saving">Saving</option>
+                              <option value="both">Both</option>
                             </select>
                           )}
-                          <input
-                            id={t}
-                            ref={t === 'deposit' ? depositRef : undefined}
-                            aria-invalid={!!fieldErrors[t]}
-                            aria-describedby={
-                              fieldErrors[t] ? `${t}-error` : undefined
-                            }
-                            type="text"
-                            inputMode="numeric"
-                            pattern="[0-9,]*"
-                            autoComplete="off"
-                            aria-label={`${LABELS[t]} in UGX`}
-                            placeholder="0"
-                            disabled={
-                              !member ||
-                              busy ||
-                              uncertain ||
-                              (!!otherAccountId &&
-                                t !== 'loanInstalment' &&
-                                !accountTypes[t])
-                            }
-                            value={values[t]}
-                            onChange={(e) => {
-                              const text = e.currentTarget.value;
-                              if (!/^[0-9,]*$/.test(text)) return;
-                              setValues((v) => ({ ...v, [t]: text }));
-                              setFieldErrors((errors) => ({
-                                ...errors,
-                                [t]: undefined,
-                              }));
-                            }}
-                            onBlur={(event) => {
-                              try {
-                                const text = event.currentTarget.value;
-                                const formatted = text
-                                  ? money(amount(text, true))
-                                  : '';
-                                setValues((v) => ({ ...v, [t]: formatted }));
-                                setFieldErrors((e) => ({
-                                  ...e,
-                                  [t]: undefined,
-                                }));
-                              } catch (e) {
+                          {accountTypes[t] === 'both' ? (
+                            <span>UGX</span>
+                          ) : (
+                            <input
+                              id={t}
+                              ref={t === 'deposit' ? depositRef : undefined}
+                              aria-invalid={!!fieldErrors[t]}
+                              aria-describedby={
+                                fieldErrors[t] ? `${t}-error` : undefined
+                              }
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9,]*"
+                              autoComplete="off"
+                              aria-label={`${LABELS[t]} in UGX`}
+                              placeholder="0"
+                              disabled={
+                                !member ||
+                                busy ||
+                                uncertain ||
+                                (!!otherAccountId &&
+                                  t !== 'loanInstalment' &&
+                                  !accountTypes[t])
+                              }
+                              value={values[t]}
+                              onChange={(e) => {
+                                const text = e.currentTarget.value;
+                                if (!/^[0-9,]*$/.test(text)) return;
+                                setValues((v) => ({ ...v, [t]: text }));
                                 setFieldErrors((errors) => ({
                                   ...errors,
-                                  [t]: message(e),
+                                  [t]: undefined,
                                 }));
-                              }
-                            }}
-                          />
+                              }}
+                              onBlur={(event) => {
+                                try {
+                                  const text = event.currentTarget.value;
+                                  const formatted = text
+                                    ? money(amount(text, true))
+                                    : '';
+                                  setValues((v) => ({ ...v, [t]: formatted }));
+                                  setFieldErrors((e) => ({
+                                    ...e,
+                                    [t]: undefined,
+                                  }));
+                                } catch (e) {
+                                  setFieldErrors((errors) => ({
+                                    ...errors,
+                                    [t]: message(e),
+                                  }));
+                                }
+                              }}
+                            />
+                          )}
                         </div>
+                        {t !== 'loanInstalment' &&
+                          accountTypes[t] === 'both' && (
+                            <div className="split-amounts">
+                              {(['saving', 'fixed'] as const).map((account) => (
+                                <label
+                                  key={account}
+                                  htmlFor={`${t}-${account}`}
+                                >
+                                  <span className="sr-only">
+                                    {LABELS[t]} {ACCOUNT_TYPES[account]} in UGX
+                                  </span>
+                                  <div className="currency-input">
+                                    <span>{ACCOUNT_TYPES[account]}</span>
+                                    <input
+                                      id={`${t}-${account}`}
+                                      aria-label={`${LABELS[t]} ${ACCOUNT_TYPES[account]} in UGX`}
+                                      inputMode="numeric"
+                                      type="text"
+                                      placeholder="0"
+                                      autoComplete="off"
+                                      disabled={!member || busy || uncertain}
+                                      aria-invalid={!!fieldErrors[t]}
+                                      aria-describedby={
+                                        fieldErrors[t]
+                                          ? `${t}-error`
+                                          : undefined
+                                      }
+                                      value={splitValues[t][account]}
+                                      onChange={(e) => {
+                                        const text = e.currentTarget.value;
+                                        if (!/^[0-9,]*$/.test(text)) return;
+                                        setSplitValues((v) => ({
+                                          ...v,
+                                          [t]: { ...v[t], [account]: text },
+                                        }));
+                                        setFieldErrors((v) => ({
+                                          ...v,
+                                          [t]: undefined,
+                                        }));
+                                      }}
+                                      onBlur={(e) => {
+                                        try {
+                                          const text = e.currentTarget.value;
+                                          const formatted = text
+                                            ? money(amount(text, true))
+                                            : '';
+                                          setSplitValues((v) => ({
+                                            ...v,
+                                            [t]: {
+                                              ...v[t],
+                                              [account]: formatted,
+                                            },
+                                          }));
+                                        } catch (error) {
+                                          setFieldErrors((v) => ({
+                                            ...v,
+                                            [t]: message(error),
+                                          }));
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                          )}
                         {fieldErrors[t] && (
                           <p className="field-error" id={`${t}-error`}>
                             {fieldErrors[t]}
@@ -1650,9 +1830,9 @@ export default function App({ route: initialRoute }: { route: string }) {
             </div>
             {Filters({})}
             <p className="list-summary">
-              {filtered.length} lines match on this page
+              {filtered.length} matching lines in this workday
             </p>
-            {rowsView(filtered)}
+            {rowsView(entryPages.items)}
             {entryPagination('Recent entry pages')}
           </>
         )}
@@ -1689,9 +1869,9 @@ export default function App({ route: initialRoute }: { route: string }) {
               <>
                 {Filters({})}
                 <p className="list-summary">
-                  {filtered.length} lines match on this page
+                  {filtered.length} matching lines in this workday
                 </p>
-                {rowsView(filtered)}
+                {rowsView(entryPages.items)}
                 {entryPagination('Workday entry pages')}
               </>
             ) : (
@@ -1803,12 +1983,12 @@ export default function App({ route: initialRoute }: { route: string }) {
             <div className="viewer-filters">{Filters({ viewer: true })}</div>
             <div className="viewer-page-info">
               <span>
-                {filtered.length} lines match on this page
+                {filtered.length} matching lines in this workday
                 {cached ? ' · saved records' : ''}
               </span>
               <span>Up to 50 lines per page</span>
             </div>
-            {rowsView(filtered, true)}
+            {rowsView(entryPages.items, true)}
             {entryPagination('Register pages')}
           </>
         )}
@@ -1907,17 +2087,25 @@ export default function App({ route: initialRoute }: { route: string }) {
             </div>
           )}
           <dl className="review-lines">
-            {TYPES.filter((t) => reviewValues[t] > 0).map((t) => (
-              <div key={t}>
-                <dt>
-                  {LABELS[t]}
-                  {otherAccountId && t !== 'loanInstalment' && accountTypes[t]
-                    ? ` · ${ACCOUNT_TYPES[accountTypes[t]!]}`
-                    : ''}
-                </dt>
-                <dd>UGX {money(reviewValues[t])}</dd>
+            {reviewParts.flatMap((part) =>
+              TYPES.filter((t) => part.values[t] > 0).map((t) => (
+                <div key={`${part.entryId}:${t}`}>
+                  <dt>
+                    {LABELS[t]}
+                    {otherAccountId && t !== 'loanInstalment'
+                      ? ` · ${ACCOUNT_TYPES[part.accountTypes[t] as AccountType]}`
+                      : ''}
+                  </dt>
+                  <dd>UGX {money(part.values[t])}</dd>
+                </div>
+              )),
+            )}
+            {reviewSplit && (
+              <div>
+                <dt>Total deposits</dt>
+                <dd>UGX {money(reviewValues.deposit)}</dd>
               </div>
-            ))}
+            )}
             <div>
               <dt>Cash received</dt>
               <dd>

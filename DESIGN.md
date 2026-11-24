@@ -115,3 +115,22 @@ repositions during scrolling/resizing, and scrolls long result lists internally.
 The popup is portalled inside the native dialog so it remains in the modal's
 focus/inert boundary and escapes the body's clipping. The runtime `--z-popover`
 token owns its layer. Keep the existing control border, radius and flat surface.
+
+Both-account and pagination update (24 November 2026): for multi-account members,
+Deposit and Withdrawal independently offer Fixed, Saving and Both. Both expands
+into Saving and Fixed currency fields with fixed account labels, and requires
+positive amounts in both. Mode switches preserve inactive draft values; clearing
+the selector clears its amounts. Each combined transaction retains the existing
+amount limit. Review and receipt list each typed amount. One durable paired
+command creates linked ordinary entries atomically; loan repayment appears only
+once. Account type remains intent, not an assigned Ssentezo account number.
+
+All entry searches/status/type/agent filters apply to the selected workday before
+50-line pagination. Recording refills gaps and clamps an emptied final page;
+Undo and live updates recompute matching counts. Shared Pagination supplies
+clickable numbered buttons, a highlighted aria-current page and bounded ellipses
+to every list. Its existing green button and focus tokens remain canonical.
+Numbers occupy their own centered row on narrow screens, with the summary below.
+Explicit page navigation focuses results; automatic refilling preserves reading
+position and transfers focus only when the focused recording button disappears.
+This supersedes the page-local filtering and Previous/Next-only guidance above.

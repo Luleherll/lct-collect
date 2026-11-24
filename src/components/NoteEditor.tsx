@@ -254,6 +254,7 @@ export default function NoteEditor({
                       label="Tag member pages"
                       page={pages.page}
                       pageCount={pages.pageCount}
+                      onPageChange={pages.goTo}
                       onPrevious={pages.previous}
                       onNext={pages.next}
                     />

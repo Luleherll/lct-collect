@@ -8,6 +8,7 @@ import {
 } from './local';
 import { project } from './projection';
 import {
+  entryParts,
   dayAt,
   integer,
   TYPES,
@@ -54,7 +55,7 @@ export function archivePaths(items: Pending[], uid: string) {
     ...new Set(
       items.flatMap(({ command: c }) => [
         ...affectedPaths(c, uid),
-        ...(c.kind === 'entry'
+        ...(c.kind === 'entry' || c.kind === 'entryPair'
           ? [
               `members/${c.data.member?.memberId}`,
               ...(c.data.otherAccountId
@@ -81,8 +82,9 @@ function eligible(
     d.sessionId !== `${uid}_${session.workday}`
   )
     throw new Error('The session is unavailable. Contact the office.');
-  if (c.kind === 'entry') {
-    if (records[`entries/${d.entryId}`])
+  if (c.kind === 'entry' || c.kind === 'entryPair') {
+    const parts = entryParts(d, c.kind === 'entryPair');
+    if (parts.some((part) => records[`entries/${part.entryId}`]))
       throw new Error(
         'This entry reference already exists. Check recent entries before retrying.',
       );
@@ -118,7 +120,11 @@ function eligible(
           (t) =>
             t !== 'loanInstalment' &&
             d.values[t] > 0 &&
-            !['fixed', 'saving'].includes(d.accountTypes?.[t]),
+            !parts.every(
+              (part) =>
+                !part.values[t] ||
+                ['fixed', 'saving'].includes(part.accountTypes[t]),
+            ),
         )
       )
         throw new Error(
