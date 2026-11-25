@@ -2678,24 +2678,6 @@ textarea:hover:not(:disabled) {
   min-height: 44px;
   font-size: 16px;
 }
-.entry-note {
-  display: block;
-  font-size: 14px;
-  margin: 10px 0 12px;
-}
-.entry-note > .muted {
-  font-size: 12px;
-  font-weight: 400;
-  margin-left: 6px;
-}
-.entry-note textarea {
-  display: block;
-  width: 100%;
-  min-height: 64px;
-  margin-top: 6px;
-  padding: 8px 10px;
-  resize: none;
-}
 .amount-currency {
   margin: 8px 0 0;
   font-size: 12px;
@@ -2807,10 +2789,6 @@ textarea:hover:not(:disabled) {
     min-width: 44px;
     flex-basis: 44px;
   }
-}
-.entry-note textarea {
-  font-weight: 400;
-  line-height: 1.4;
 }
 
 /* Header disclosure owns secondary navigation and sign-out for every role. */
@@ -3481,9 +3459,10 @@ dialog.bottom-sheet {
   grid-row: 1;
 }
 .page-numbers .button {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 8px;
+  min-width: 35.2px;
+  min-height: 35.2px;
+  padding: 6.4px;
+  font-size: 10.4px;
 }
 .page-numbers .selected {
   background: var(--green);
@@ -3516,7 +3495,20 @@ dialog.bottom-sheet {
 .agent-page .amount-row .split-amounts .currency-input > span {
   display: block;
 }
-.currency-input.split-selector select {
-  flex: 1;
-  width: auto;
+
+.amount-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.amount-heading > label {
+  margin: 0;
+}
+.split-back {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 6px;
+  flex: none;
 }

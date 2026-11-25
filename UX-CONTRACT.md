@@ -153,3 +153,14 @@ focus; a removed focused recording control yields focus to the next record or
 results heading. Existing offline completeness and unsynced-only status rules
 remain in force. Business sources: user-approved plan, shared protocol and sync
 backend. Evidence: paired-entry, sync-api and both-pagination regression tests.
+
+Collection form refinement (25 November 2026): the user requests page-number
+buttons 20% smaller: 35.2px minimum width/height, 6.4px padding and 10.4px type;
+Previous/Next retain their existing size. Both now shows only its Saving and
+Fixed amount rows, without a third selector/currency row. A 32px arrow button in
+the transaction heading restores the blank account-type selector and disabled
+single amount, then returns focus to that selector. Inactive split drafts survive
+and are excluded from review, saves and dirty-navigation guards until Both is
+chosen again. New collection entries have no note field or review note; stale
+legacy draft notes are ignored and new submissions send an empty note. Existing
+saved/queued entry notes and the separate private Notes feature remain supported.

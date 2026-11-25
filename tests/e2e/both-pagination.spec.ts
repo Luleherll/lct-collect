@@ -29,7 +29,6 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
   const refs = ['both-member-saving', 'both-member-fixed'].map((id) =>
     db.doc('members/' + id),
   );
-  const marker = 'both-browser-' + Date.now();
   try {
     for (const [index, ref] of refs.entries())
       await ref.set({
@@ -45,7 +44,9 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
     await page.getByLabel('Search members', { exact: true }).fill('LCT88221');
     await page.locator('.multi-account').click();
     await page.getByLabel('Deposit account type').selectOption('both');
+    await expect(page.locator('#deposit-saving')).toBeFocused();
     await page.getByLabel('Withdrawal account type').selectOption('both');
+    await expect(page.locator('#withdrawal-saving')).toBeFocused();
     await page
       .getByRole('button', { name: 'Review entry', exact: true })
       .click();
@@ -58,7 +59,9 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
     ])
       await page.getByLabel(label + ' in UGX', { exact: true }).fill(value);
     await page.getByLabel('Loan instalment in UGX', { exact: true }).fill('5');
-    await page.getByLabel('Notes Optional').fill(marker);
+    await expect(page.locator('#entry-note')).toHaveCount(0);
+    await expect(page.getByLabel('Deposit account type')).toHaveCount(0);
+    await expect(page.locator('.split-amounts input')).toHaveCount(4);
     const labels = page.locator('.split-amounts .currency-input > span');
     await expect(labels).toHaveText(['Saving', 'Fixed', 'Saving', 'Fixed']);
     for (let i = 0; i < 4; i++) await expect(labels.nth(i)).toBeVisible();
@@ -103,7 +106,14 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
     await expect(
       page.getByLabel('Withdrawal Fixed in UGX', { exact: true }),
     ).toHaveValue(/40/);
+    await page
+      .getByRole('button', { name: 'Reset deposit account selection' })
+      .click();
+    await expect(page.getByLabel('Deposit account type')).toBeFocused();
+    await expect(page.getByLabel('Deposit account type')).toHaveValue('');
+    await expect(page.locator('#deposit')).toBeDisabled();
     await page.getByLabel('Deposit account type').selectOption('saving');
+    await page.locator('#deposit').fill('100');
     await expect(
       page.getByLabel('Deposit in UGX', { exact: true }),
     ).toHaveValue(/100/);
@@ -111,6 +121,12 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
     await expect(
       page.getByLabel('Deposit Fixed in UGX', { exact: true }),
     ).toHaveValue(/200/);
+    await page
+      .getByRole('button', { name: 'Reset withdrawal account selection' })
+      .click();
+    await expect(page.getByLabel('Withdrawal account type')).toHaveValue('');
+    await page.getByLabel('Withdrawal account type').selectOption('both');
+    await expect(page.locator('#withdrawal-saving')).toHaveValue(/30/);
     await page
       .getByRole('button', { name: 'Review entry', exact: true })
       .click();
@@ -126,19 +142,25 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
       page.getByRole('status', { name: 'Saved entry receipt' }),
     ).toContainText('Withdrawal (Fixed) UGX 40');
     expect(
-      (await db.collection('entries').where('note', '==', marker).get()).empty,
+      (await db.collection('entries').where('memberId', '==', refs[0].id).get())
+        .empty,
     ).toBe(true);
     await context.setOffline(false);
     await expect
       .poll(
         async () =>
-          (await db.collection('entries').where('note', '==', marker).get())
-            .size,
+          (
+            await db
+              .collection('entries')
+              .where('memberId', '==', refs[0].id)
+              .get()
+          ).size,
       )
       .toBe(2);
     const entries = (
-      await db.collection('entries').where('note', '==', marker).get()
+      await db.collection('entries').where('memberId', '==', refs[0].id).get()
     ).docs.map((d) => d.data());
+    expect(entries.every((e) => !e.note)).toBe(true);
     expect(entries[0].submissionGroupId).toBe(entries[1].submissionGroupId);
     expect(entries.flatMap((e) => Object.keys(e.lines))).toHaveLength(5);
     const summary = await db.doc(`sessions/${entries[0].sessionId}`).get();
@@ -180,6 +202,19 @@ test('viewer refills filtered pages, clamps the last page and navigates numbered
     await page.getByLabel('Workday', { exact: true }).fill(day);
     const nav = page.getByRole('navigation', { name: 'Register pages' });
     await expect(page.locator('.entry-row')).toHaveCount(50);
+    const numberStyle = await nav
+      .getByRole('button', { name: 'Page 1', exact: true })
+      .evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          width: el.getBoundingClientRect().width,
+          height: el.getBoundingClientRect().height,
+          fontSize: style.fontSize,
+        };
+      });
+    expect(numberStyle.width).toBeCloseTo(35.2, 1);
+    expect(numberStyle.height).toBeCloseTo(35.2, 1);
+    expect(numberStyle.fontSize).toBe('10.4px');
     await nav.getByRole('button', { name: 'Page 3', exact: true }).click();
     await expect(page.locator('.entry-row')).toHaveCount(21);
     await expect(
