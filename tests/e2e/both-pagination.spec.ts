@@ -44,7 +44,9 @@ test('Both deposits and withdrawals survive offline reload and save one atomic s
     await page.getByLabel('Search members', { exact: true }).fill('LCT88221');
     await page.locator('.multi-account').click();
     await page.getByLabel('Deposit account type').selectOption('both');
+    await expect(page.locator('#deposit-saving')).toBeFocused();
     await page.getByLabel('Withdrawal account type').selectOption('both');
+    await expect(page.locator('#withdrawal-saving')).toBeFocused();
     await page
       .getByRole('button', { name: 'Review entry', exact: true })
       .click();

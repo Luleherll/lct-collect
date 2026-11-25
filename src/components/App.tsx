@@ -1611,6 +1611,12 @@ export default function App({ route: initialRoute }: { route: string }) {
                                   const mode = e.target.value as
                                     AccountType | 'both';
                                   const previous = accountTypes[t];
+                                  if (mode === 'both')
+                                    requestAnimationFrame(() =>
+                                      document
+                                        .getElementById(`${t}-saving`)
+                                        ?.focus(),
+                                    );
                                   {
                                     if (
                                       mode === 'both' &&
