@@ -134,3 +134,14 @@ Numbers occupy their own centered row on narrow screens, with the summary below.
 Explicit page navigation focuses results; automatic refilling preserves reading
 position and transfers focus only when the focused recording button disappears.
 This supersedes the page-local filtering and Previous/Next-only guidance above.
+
+Collection form refinement (25 November 2026): the user requests page-number
+buttons 20% smaller: 35.2px minimum width/height, 6.4px padding and 10.4px type;
+Previous/Next retain their existing size. Both now shows only its Saving and
+Fixed amount rows, without a third selector/currency row. A 32px arrow button in
+the transaction heading restores the blank account-type selector and disabled
+single amount, then returns focus to that selector. Inactive split drafts survive
+and are excluded from review, saves and dirty-navigation guards until Both is
+chosen again. New collection entries have no note field or review note; stale
+legacy draft notes are ignored and new submissions send an empty note. Existing
+saved/queued entry notes and the separate private Notes feature remain supported.

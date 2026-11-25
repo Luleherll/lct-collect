@@ -540,7 +540,7 @@ test('automatic record cache survives reload while the database is unavailable',
   await expect(page.locator('#main-content')).not.toHaveAttribute('inert', '');
 });
 
-test('multi-account members select in one tap and save mixed account types with a note', async ({
+test('multi-account members select in one tap and save mixed account types without an entry-note field', async ({
   page,
   browser,
 }) => {
@@ -561,9 +561,7 @@ test('multi-account members select in one tap and save mixed account types with 
   await page.locator('#deposit').fill('33008');
   await expect(page.getByLabel('Loan instalment account type')).toHaveCount(0);
   await page.locator('#loanInstalment').fill('1000');
-  await page
-    .getByLabel('Notes Optional', { exact: true })
-    .fill('Bring the passbook next visit');
+  await expect(page.locator('#entry-note')).toHaveCount(0);
   await page.getByLabel('Deposit account type').selectOption('');
   await expect(page.locator('#deposit')).toBeDisabled();
   await expect(page.locator('#deposit')).toHaveValue('');
@@ -589,9 +587,7 @@ test('multi-account members select in one tap and save mixed account types with 
   await page.getByRole('button', { name: 'Review entry', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('Deposit · Saving');
   await expect(page.getByRole('dialog')).toContainText('Loan instalment');
-  await expect(page.getByRole('dialog')).toContainText(
-    'Bring the passbook next visit',
-  );
+  await expect(page.getByRole('dialog')).not.toContainText('Note');
   await page.getByRole('button', { name: 'Confirm & save' }).click();
   await expect(
     page.getByRole('status', { name: 'Saved entry receipt' }),
@@ -604,9 +600,7 @@ test('multi-account members select in one tap and save mixed account types with 
   await expect(saved).toContainText('Saving');
   await expect(saved).not.toContainText('000401001008');
   await saved.locator('.entry-identity').click();
-  await expect(page.getByRole('dialog')).toContainText(
-    'Bring the passbook next visit',
-  );
+  await expect(page.getByRole('dialog')).not.toContainText('Note');
   await page.keyboard.press('Escape');
   const viewerContext = await browser.newContext();
   const viewer = await viewerContext.newPage();
@@ -618,7 +612,7 @@ test('multi-account members select in one tap and save mixed account types with 
     .first();
   await expect(row).toContainText('Saving');
   await row.locator('.entry-identity').click();
-  await expect(viewer.getByRole('dialog')).toContainText(
+  await expect(viewer.getByRole('dialog')).not.toContainText(
     'Bring the passbook next visit',
   );
   await viewerContext.close();
@@ -1349,15 +1343,15 @@ test('equal-width search rows, stable account controls and accessible header men
   await page.screenshot({ path: join(evidence, 'compact-header-menu.png') });
   await page.getByRole('heading', { name: 'New entry', exact: true }).click();
   await expect(page.getByRole('menu')).toHaveCount(0);
-  await page.locator('#entry-note').fill('Unsaved collection note');
+  await page.getByLabel('Search members', { exact: true }).fill('LCT003');
+  await page.locator('.single-account').first().click();
+  await page.locator('#deposit').fill('75');
   await menu(page, 'Sign out');
   await expect(page.getByRole('dialog')).toContainText('not been saved');
   await page.getByRole('button', { name: 'Keep entry', exact: true }).click();
   await expect(more).toBeFocused();
-  await expect(page.locator('#entry-note')).toHaveValue(
-    'Unsaved collection note',
-  );
-  await page.locator('#entry-note').fill('');
+  await expect(page.locator('#deposit')).toHaveValue('75');
+  await page.locator('#deposit').fill('');
   await menu(page, 'Sign out');
   await page.waitForURL('**/login/');
 });

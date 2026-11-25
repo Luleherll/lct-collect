@@ -136,7 +136,6 @@ export default function App({ route: initialRoute }: { route: string }) {
   const [reviewParts, setReviewParts] = useState<ReturnType<typeof entryParts>>(
     [],
   );
-  const [entryNote, setEntryNote] = useState('');
   const [noteDraft, setNoteDraft] = useState('');
   const [noteExtraDirty, setNoteExtraDirty] = useState(false);
   const pendingId = useRef(''),
@@ -162,8 +161,11 @@ export default function App({ route: initialRoute }: { route: string }) {
 
   const dirty =
     TYPES.some((t) => values[t].trim() !== '') ||
-    Object.values(splitValues).some((v) => v.saving.trim() || v.fixed.trim()) ||
-    !!entryNote.trim() ||
+    (['deposit', 'withdrawal'] as const).some(
+      (t) =>
+        accountTypes[t] === 'both' &&
+        (splitValues[t].saving.trim() || splitValues[t].fixed.trim()),
+    ) ||
     (route === 'notes' && (!!noteDraft.trim() || noteExtraDirty));
   const draftLoaded = useRef('');
   useEffect(() => {
@@ -175,7 +177,6 @@ export default function App({ route: initialRoute }: { route: string }) {
         d.submissionId ?? (d.member ? crypto.randomUUID() : '');
       setMember(d.member ?? null);
       setValues(d.values ?? { ...EMPTY_AMOUNTS });
-      setEntryNote(d.entryNote ?? '');
       setAccountTypes(d.accountTypes ?? {});
       setSplitValues(d.splitValues ?? emptySplits());
       setOtherAccountId(d.otherAccountId ?? '');
@@ -199,7 +200,6 @@ export default function App({ route: initialRoute }: { route: string }) {
             submissionId,
             member,
             values,
-            entryNote,
             accountTypes,
             splitValues,
             otherAccountId,
@@ -214,7 +214,6 @@ export default function App({ route: initialRoute }: { route: string }) {
     user?.uid,
     member,
     values,
-    entryNote,
     accountTypes,
     splitValues,
     otherAccountId,
@@ -296,7 +295,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setHistoryDay(remembered?.historyDay ?? '');
     setError('');
     setModal(null);
-    setEntryNote('');
+
     setNoteDraft('');
     void changeLocal((s) => {
       if (s.drafts) {
@@ -409,7 +408,7 @@ export default function App({ route: initialRoute }: { route: string }) {
         routeViews.current.clear();
         setMember(null);
         setValues({ ...EMPTY_AMOUNTS });
-        setEntryNote('');
+
         setNoteDraft('');
         setAccountTypes({});
         setSplitValues(emptySplits());
@@ -805,7 +804,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     const run = () => {
       setValues({ ...EMPTY_AMOUNTS });
       setFieldErrors({});
-      setEntryNote('');
+
       setAccountTypes({});
       setSplitValues(emptySplits());
       pendingId.current = crypto.randomUUID();
@@ -826,7 +825,7 @@ export default function App({ route: initialRoute }: { route: string }) {
     setOtherAccountId('');
     setAccountTypes({});
     setSplitValues(emptySplits());
-    setEntryNote('');
+
     setMemberQuery('');
     setValues({ ...EMPTY_AMOUNTS });
     setFieldErrors({});
@@ -861,7 +860,7 @@ export default function App({ route: initialRoute }: { route: string }) {
             Object.entries(accountTypes).filter(([, v]) => v !== 'both'),
           ) as Partial<Record<LineType, AccountType>>,
           splitAmounts: reviewSplit,
-          note: entryNote,
+          note: '',
         },
       );
       storage.remove('session', `lct-pending-${user.uid}`);
@@ -1468,7 +1467,7 @@ export default function App({ route: initialRoute }: { route: string }) {
                               setOtherAccountId('');
                               setAccountTypes({});
                               setSplitValues(emptySplits());
-                              setEntryNote('');
+
                               setValues({ ...EMPTY_AMOUNTS });
                               setFieldErrors({});
                               pendingId.current = '';
@@ -1551,85 +1550,109 @@ export default function App({ route: initialRoute }: { route: string }) {
                     </p>
                     {TYPES.map((t) => (
                       <div className="amount-row" key={t}>
-                        <label htmlFor={t}>
-                          <strong>{LABELS[t]}</strong>
-                          <span>
-                            {t === 'deposit'
-                              ? 'Amount received from member'
-                              : t === 'withdrawal'
-                                ? 'Amount paid to member'
-                                : 'Amount received for loan repayment'}
-                          </span>
-                        </label>
-                        <div
-                          className={
-                            'currency-input' +
-                            (accountTypes[t] === 'both'
-                              ? ' split-selector'
-                              : '')
-                          }
-                        >
-                          {t === 'loanInstalment' ? (
-                            <span>UGX</span>
-                          ) : (
-                            <select
-                              id={`${t}-account-type`}
-                              aria-invalid={!!fieldErrors[t]}
-                              aria-describedby={
-                                fieldErrors[t] ? `${t}-error` : undefined
-                              }
-                              aria-label={`${LABELS[t]} account type`}
-                              value={accountTypes[t] ?? ''}
-                              disabled={!otherAccountId || busy || uncertain}
-                              onChange={(e) => {
-                                const mode = e.target.value as
-                                  AccountType | 'both';
-                                const previous = accountTypes[t];
-                                {
-                                  if (
-                                    mode === 'both' &&
-                                    (previous === 'saving' ||
-                                      previous === 'fixed')
-                                  )
-                                    setSplitValues((v) => ({
-                                      ...v,
-                                      [t]: { ...v[t], [previous]: values[t] },
-                                    }));
-                                  if (
-                                    previous === 'both' &&
-                                    (mode === 'saving' || mode === 'fixed')
-                                  )
-                                    setValues((v) => ({
-                                      ...v,
-                                      [t]: splitValues[t][mode],
-                                    }));
-                                  if (!mode) {
-                                    setValues((v) => ({ ...v, [t]: '' }));
-                                    setSplitValues((v) => ({
-                                      ...v,
-                                      [t]: { saving: '', fixed: '' },
-                                    }));
-                                  }
-                                }
+                        <div className="amount-heading">
+                          <label
+                            htmlFor={
+                              accountTypes[t] === 'both' ? `${t}-saving` : t
+                            }
+                          >
+                            <strong>{LABELS[t]}</strong>
+                            <span>
+                              {t === 'deposit'
+                                ? 'Amount received from member'
+                                : t === 'withdrawal'
+                                  ? 'Amount paid to member'
+                                  : 'Amount received for loan repayment'}
+                            </span>
+                          </label>
+                          {accountTypes[t] === 'both' && (
+                            <button
+                              type="button"
+                              className="icon-button split-back"
+                              aria-label={`Reset ${LABELS[t].toLowerCase()} account selection`}
+                              title="Back to one amount"
+                              disabled={busy || uncertain}
+                              onClick={() => {
                                 setAccountTypes((v) => ({
                                   ...v,
-                                  [t]: mode,
+                                  [t]: undefined,
                                 }));
+                                setValues((v) => ({ ...v, [t]: '' }));
                                 setFieldErrors((v) => ({
                                   ...v,
                                   [t]: undefined,
                                 }));
+                                requestAnimationFrame(() =>
+                                  document
+                                    .getElementById(`${t}-account-type`)
+                                    ?.focus(),
+                                );
                               }}
                             >
-                              <option value="">Account type</option>
-                              <option value="fixed">Fixed</option>
-                              <option value="saving">Saving</option>
-                              <option value="both">Both</option>
-                            </select>
+                              <Icon name="arrow-left" />
+                            </button>
                           )}
-                          {accountTypes[t] === 'both' ? (
-                            <span>UGX</span>
-                          ) : (
+                        </div>
+                        {accountTypes[t] !== 'both' && (
+                          <div className="currency-input">
+                            {t === 'loanInstalment' ? (
+                              <span>UGX</span>
+                            ) : (
+                              <select
+                                id={`${t}-account-type`}
+                                aria-invalid={!!fieldErrors[t]}
+                                aria-describedby={
+                                  fieldErrors[t] ? `${t}-error` : undefined
+                                }
+                                aria-label={`${LABELS[t]} account type`}
+                                value={accountTypes[t] ?? ''}
+                                disabled={!otherAccountId || busy || uncertain}
+                                onChange={(e) => {
+                                  const mode = e.target.value as
+                                    AccountType | 'both';
+                                  const previous = accountTypes[t];
+                                  {
+                                    if (
+                                      mode === 'both' &&
+                                      (previous === 'saving' ||
+                                        previous === 'fixed')
+                                    )
+                                      setSplitValues((v) => ({
+                                        ...v,
+                                        [t]: { ...v[t], [previous]: values[t] },
+                                      }));
+                                    if (
+                                      previous === 'both' &&
+                                      (mode === 'saving' || mode === 'fixed')
+                                    )
+                                      setValues((v) => ({
+                                        ...v,
+                                        [t]: splitValues[t][mode],
+                                      }));
+                                    if (!mode) {
+                                      setValues((v) => ({ ...v, [t]: '' }));
+                                      setSplitValues((v) => ({
+                                        ...v,
+                                        [t]: { saving: '', fixed: '' },
+                                      }));
+                                    }
+                                  }
+                                  setAccountTypes((v) => ({
+                                    ...v,
+                                    [t]: mode,
+                                  }));
+                                  setFieldErrors((v) => ({
+                                    ...v,
+                                    [t]: undefined,
+                                  }));
+                                }}
+                              >
+                                <option value="">Account type</option>
+                                <option value="fixed">Fixed</option>
+                                <option value="saving">Saving</option>
+                                <option value="both">Both</option>
+                              </select>
+                            )}
                             <input
                               id={t}
                               ref={t === 'deposit' ? depositRef : undefined}
@@ -1667,7 +1690,10 @@ export default function App({ route: initialRoute }: { route: string }) {
                                   const formatted = text
                                     ? money(amount(text, true))
                                     : '';
-                                  setValues((v) => ({ ...v, [t]: formatted }));
+                                  setValues((v) => ({
+                                    ...v,
+                                    [t]: formatted,
+                                  }));
                                   setFieldErrors((e) => ({
                                     ...e,
                                     [t]: undefined,
@@ -1680,8 +1706,8 @@ export default function App({ route: initialRoute }: { route: string }) {
                                 }
                               }}
                             />
-                          )}
-                        </div>
+                          </div>
+                        )}
                         {t !== 'loanInstalment' &&
                           accountTypes[t] === 'both' && (
                             <div className="split-amounts">
@@ -1755,18 +1781,6 @@ export default function App({ route: initialRoute }: { route: string }) {
                         )}
                       </div>
                     ))}
-                    <label className="entry-note" htmlFor="entry-note">
-                      Notes <span className="muted">Optional</span>
-                      <textarea
-                        id="entry-note"
-                        maxLength={2000}
-                        rows={2}
-                        placeholder="Anything to note about this collection"
-                        value={entryNote}
-                        disabled={!member || busy || uncertain}
-                        onChange={(e) => setEntryNote(e.target.value)}
-                      />
-                    </label>
                     <div className="actions">
                       <button
                         type="button"
@@ -2086,12 +2100,6 @@ export default function App({ route: initialRoute }: { route: string }) {
             <p className="alert error" role="alert">
               {error}
             </p>
-          )}
-          {entryNote.trim() && (
-            <div className="entry-note-preview">
-              <strong>Note</strong>
-              <p className="note-body">{entryNote.trim()}</p>
-            </div>
           )}
           <dl className="review-lines">
             {reviewParts.flatMap((part) =>
